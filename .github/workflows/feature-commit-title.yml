@@ -3,6 +3,10 @@ name: Auto squash commit title
 # Sets the PR title to GSIS-<jira>-F<n>, which GitHub uses as the squash
 # commit message when squash merging is set to "Pull request title".
 #
+# GitHub always appends " (#PR)" to squash titles. There is no repo setting
+# to turn that off, so this workflow strips it from the new base-v2 commit
+# right after merge: GSIS-3214-F4 (#5) -> GSIS-3214-F4
+#
 # Sequence is global on base-v2:
 #   1st merged PR  -> GSIS-12345-F1
 #   2nd merged PR  -> GSIS-54852-F2
@@ -20,13 +24,50 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
   set-squash-title:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout squash commit
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Strip GitHub PR number from commit title
+        if: github.event_name == 'push'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          BASE_BRANCH: base-v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          TITLE=$(git log -1 --pretty=%s)
+          CLEAN=$(printf '%s' "$TITLE" | sed -E 's/[[:space:]]*\(#[0-9]+\)$//')
+          if [ "$TITLE" = "$CLEAN" ]; then
+            echo "Commit title has no (#PR) suffix."
+            exit 0
+          fi
+          if ! printf '%s' "$CLEAN" | grep -qiE '^GSIS-[0-9]+-F[0-9]+$'; then
+            echo "Not a GSIS-xxxxx-Fn squash title; leaving as-is."
+            exit 0
+          fi
+          BODY=$(git log -1 --pretty=%b)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$BODY" ]; then
+            git commit --amend -m "$CLEAN" -m "$BODY"
+          else
+            git commit --amend -m "$CLEAN"
+          fi
+          git push --force-with-lease="refs/heads/${BASE_BRANCH}:${EXPECTED_SHA}" \
+            origin "HEAD:refs/heads/${BASE_BRANCH}"
+          echo "Rewrote commit title to ${CLEAN}"
+
       - name: Assign GSIS-xxxxx-Fn titles
         uses: actions/github-script@v7
         with:
