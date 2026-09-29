@@ -32,7 +32,7 @@ jobs:
         with:
           script: |
             const baseBranch = 'base-v2';
-            const titleRe = /^(GSIS-\d+)-F(\d+)$/i;
+            const titleRe = /^(GSIS-\d+)-F(\d+)(?:\s*\(#\d+\))?$/i;
             const branchRe = /(?:^|\/)(?:feature|bugfix)\/(GSIS-\d+)/i;
             const anyJiraRe = /(GSIS-\d+)/i;
 
