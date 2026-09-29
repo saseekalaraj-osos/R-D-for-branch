@@ -1,0 +1,121 @@
+name: Auto squash commit title
+
+# Sets the PR title to GSIS-<jira>-F<n>, which GitHub uses as the squash
+# commit message when squash merging is set to "Pull request title".
+#
+# Sequence is global on base-v2:
+#   1st merged PR  -> GSIS-12345-F1
+#   2nd merged PR  -> GSIS-54852-F2
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - base-v2
+  push:
+    branches:
+      - base-v2
+
+concurrency:
+  group: auto-squash-title-base-v2
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  set-squash-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign GSIS-xxxxx-Fn titles
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const baseBranch = 'base-v2';
+            const titleRe = /^(GSIS-\d+)-F(\d+)$/i;
+            const branchRe = /(?:^|\/)(?:feature|bugfix)\/(GSIS-\d+)/i;
+            const anyJiraRe = /(GSIS-\d+)/i;
+
+            function jiraIdFrom(ref, fallbackTitle) {
+              const fromBranch = ref && ref.match(branchRe);
+              if (fromBranch) {
+                return fromBranch[1].toUpperCase();
+              }
+              const fromTitle = fallbackTitle && fallbackTitle.match(anyJiraRe);
+              return fromTitle ? fromTitle[1].toUpperCase() : null;
+            }
+
+            async function highestMergedFeatureNumber() {
+              let highest = 0;
+              for (let page = 1; page <= 50; page++) {
+                const result = await github.rest.repos.listCommits({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: baseBranch,
+                  per_page: 100,
+                  page
+                });
+                if (result.data.length === 0) {
+                  break;
+                }
+                for (const commit of result.data) {
+                  const title = commit.commit.message.split('\n')[0].trim();
+                  const match = title.match(titleRe);
+                  if (match) {
+                    highest = Math.max(highest, Number(match[2]));
+                  }
+                }
+                if (result.data.length < 100) {
+                  break;
+                }
+              }
+              return highest;
+            }
+
+            async function openPullRequests() {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                base: baseBranch,
+                per_page: 100
+              });
+              return pulls
+                .filter((pr) => !pr.draft)
+                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            }
+
+            const mergedMax = await highestMergedFeatureNumber();
+            const openPrs = await openPullRequests();
+            let next = mergedMax + 1;
+            const updated = [];
+
+            for (const pr of openPrs) {
+              const jiraId = jiraIdFrom(pr.head.ref, pr.title);
+              if (!jiraId) {
+                core.warning(
+                  `PR #${pr.number} branch ${pr.head.ref} has no GSIS id; skipped.`
+                );
+                continue;
+              }
+
+              const nextTitle = `${jiraId}-F${next}`;
+              next += 1;
+
+              if (pr.title !== nextTitle) {
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  title: nextTitle
+                });
+              }
+              updated.push(`#${pr.number} -> ${nextTitle}`);
+            }
+
+            if (updated.length === 0) {
+              core.notice('No open feature PRs to retitle.');
+              return;
+            }
+
+            core.notice(`Squash titles: ${updated.join(', ')}`);
