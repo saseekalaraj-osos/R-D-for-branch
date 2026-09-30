@@ -6,5 +6,7 @@ import lombok.Data;
 public class EmployeeDto {
     private String name;
     private String age;
+    private String salary;
+
 
 }
