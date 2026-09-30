@@ -3,9 +3,9 @@ package com.sis.git.branch.r.d.dtos;
 import lombok.Data;
 
 @Data
-public class StockDto {
+public class LeaveDto {
     private String name;
     private String age;
-    private String ghh;
+    private String newf;
 
 }
