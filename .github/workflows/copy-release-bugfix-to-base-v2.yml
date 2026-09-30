@@ -1,0 +1,188 @@
+name: Copy release bugfix to base-v2
+
+# After a bug/fix PR is merged into release/*, cherry-pick that merge onto
+# a new bug/fix/GSIS-... branch from base-v2 and open a PR into base-v2.
+#
+# Branching stays the same as the rest of the repo:
+#   feature/GSIS-<story>-...
+#   bug/fix/GSIS-<bug>
+#   bug/fix/GSIS-<bug>-GSIS-<story>
+#
+# The source branch already exists (it was merged to release), so the
+# base-v2 copy uses the same bug/fix/GSIS-... name with -to-base-v2.
+# Title workflow still reads bug id and optional story id from that name.
+#
+# Cherry-pick -x; -m 1 only when the release merge has two parents.
+# Squash-merged release PRs have one parent: cherry-pick -x with no -m.
+#
+# This file must exist on the release branch (merge it to release/2.0 as
+# well as base-v2), or the closed-PR trigger will not run.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      release_pr:
+        description: Merged release bug/fix PR number to copy to base-v2
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: copy-release-bugfix-${{ github.event.pull_request.number || inputs.release_pr }}
+  cancel-in-progress: false
+
+jobs:
+  copy-to-base-v2:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cherry-pick release bug/fix onto base-v2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_PR: ${{ inputs.release_pr }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+          TARGET=base-v2
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PR_JSON=$(gh api "repos/${OWNER}/${REPO}/pulls/${DISPATCH_PR}")
+            MERGED=$(echo "$PR_JSON" | jq -r '.merged')
+            if [ "$MERGED" != "true" ]; then
+              echo "PR #${DISPATCH_PR} is not merged. Stop."
+              exit 1
+            fi
+            PR_NUMBER="$DISPATCH_PR"
+            PR_HEAD=$(echo "$PR_JSON" | jq -r '.head.ref')
+            PR_BASE=$(echo "$PR_JSON" | jq -r '.base.ref')
+            PR_SHA=$(echo "$PR_JSON" | jq -r '.merge_commit_sha')
+            PR_URL=$(echo "$PR_JSON" | jq -r '.html_url')
+          fi
+
+          case "$PR_BASE" in
+            release/*) ;;
+            *)
+              echo "Base is ${PR_BASE}, not a release branch. Stop."
+              exit 0
+              ;;
+          esac
+
+          case "$PR_HEAD" in
+            bug/fix/*) ;;
+            *)
+              echo "Head ${PR_HEAD} is not bug/fix/GSIS-.... Stop."
+              exit 0
+              ;;
+          esac
+
+          BUG_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | head -1 | tr 'a-z' 'A-Z')
+          if [ -z "$BUG_ID" ]; then
+            echo "No GSIS id on ${PR_HEAD}. Stop."
+            exit 0
+          fi
+
+          if [ -z "$PR_SHA" ] || [ "$PR_SHA" = "null" ]; then
+            echo "No merge commit SHA on PR #${PR_NUMBER}."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$TARGET" "$PR_BASE"
+
+          COPY_BRANCH="${PR_HEAD}-to-base-v2"
+          if git ls-remote --exit-code --heads origin "$COPY_BRANCH" >/dev/null 2>&1; then
+            COPY_BRANCH="${PR_HEAD}-to-base-v2-pr-${PR_NUMBER}"
+          fi
+
+          EXISTING=$(gh pr list --base "$TARGET" --head "$COPY_BRANCH" --state open --json number --jq '.[0].number' || true)
+          if [ -n "${EXISTING:-}" ]; then
+            echo "Open base-v2 PR #${EXISTING} already exists."
+            gh pr comment "$PR_NUMBER" --body "Copy to \`${TARGET}\` already open: #${EXISTING}"
+            exit 0
+          fi
+
+          git switch -c "$COPY_BRANCH" "origin/${TARGET}"
+
+          PARENTS=$(git rev-list --parents -n 1 "$PR_SHA")
+          PARENT_COUNT=$(($(echo "$PARENTS" | wc -w) - 1))
+          echo "Picking ${PR_SHA} from ${PR_BASE} (${PARENT_COUNT} parent(s)) onto ${COPY_BRANCH}"
+
+          set +e
+          if [ "$PARENT_COUNT" -ge 2 ]; then
+            git cherry-pick -x -m 1 "$PR_SHA"
+          else
+            git cherry-pick -x "$PR_SHA"
+          fi
+          PICK_STATUS=$?
+          set -e
+
+          if [ "$PICK_STATUS" -ne 0 ]; then
+            if git diff --cached --quiet && git diff --quiet; then
+              git cherry-pick --skip || git cherry-pick --abort || true
+              gh pr comment "$PR_NUMBER" --body \
+                "The ${PR_BASE} bug/fix is already on \`${TARGET}\` (empty cherry-pick of \`${PR_SHA}\`)."
+              echo "Empty cherry-pick; already on ${TARGET}."
+              exit 0
+            fi
+            git cherry-pick --abort || true
+            gh pr comment "$PR_NUMBER" --body \
+              "Could not auto-copy this ${PR_BASE} bug/fix to \`${TARGET}\` (conflicts on \`${PR_SHA}\`). Cherry-pick it onto \`${TARGET}\` by hand:
+
+          \`\`\`
+          git switch -c ${COPY_BRANCH} origin/${TARGET}
+          git cherry-pick -x $([ "$PARENT_COUNT" -ge 2 ] && echo "-m 1 ") ${PR_SHA}
+          \`\`\`"
+            echo "Cherry-pick conflicted."
+            exit 1
+          fi
+
+          git push origin "HEAD:refs/heads/${COPY_BRANCH}"
+
+          TITLE="${BUG_ID}"
+          BODY=$(cat <<EOF
+          Automatic copy of release bug/fix **${BUG_ID}** onto \`${TARGET}\`.
+
+          - Source PR: ${PR_URL}
+          - Source branch: \`${PR_HEAD}\`
+          - Copy branch: \`${COPY_BRANCH}\`
+          - Release branch: \`${PR_BASE}\`
+          - Cherry-picked: \`${PR_SHA}\` (\`cherry-pick -x\`$( [ "$PARENT_COUNT" -ge 2 ] && echo " -m 1" ))
+
+          Squash-merge this PR so \`base-v2\` keeps the standard \`GSIS-xxxxx-BUG-Fn\` title.
+          EOF
+          )
+
+          NEW_PR=$(gh pr create \
+            --base "$TARGET" \
+            --head "$COPY_BRANCH" \
+            --title "$TITLE" \
+            --body "$BODY")
+
+          gh pr comment "$PR_NUMBER" --body \
+            "Copied this ${PR_BASE} bug/fix to \`${TARGET}\`: ${NEW_PR}"
+
+          echo "Opened ${NEW_PR}"

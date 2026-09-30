@@ -47,7 +47,7 @@ jobs:
               /^(GSIS-\d+)(?:-BUG)?-F(\d+)(?:-GSIS-\d+)?(?:\s*\(#\d+\))*$/i;
             const featureBranchRe = /(?:^|\/)feature\/(GSIS-\d+)/i;
             const bugBranchRe =
-              /(?:^|\/)(?:bug\/fix|bugfix)\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
+              /(?:^|\/)bug\/fix\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
             const bugTitleRe =
               /^(GSIS-\d+)-BUG-F\d+(?:-(GSIS-\d+))?/i;
             const anyJiraRe = /(GSIS-\d+)/i;
