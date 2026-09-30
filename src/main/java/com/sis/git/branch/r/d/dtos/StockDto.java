@@ -6,5 +6,6 @@ import lombok.Data;
 public class StockDto {
     private String name;
     private String age;
+    private String ghh;
 
 }
