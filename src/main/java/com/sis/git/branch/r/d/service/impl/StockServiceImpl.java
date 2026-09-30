@@ -13,7 +13,7 @@ import java.util.List;
 public class StockServiceImpl implements StockService {
     @Override
     public List<StockDto> getAll() {
-        List<StockDto> stockDtos = new ArrayList<>();//ydsyt7dtsydty
+        List<StockDto> stockDtos = new ArrayList<>();//added some memory allocation
         return stockDtos;
     }
-}//jdgsudsudyuydusdu
+}

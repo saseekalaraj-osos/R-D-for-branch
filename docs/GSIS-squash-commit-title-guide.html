@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GSIS Squash Commit Title Standard</title>
+  <style>
+    @page { size: A4; margin: 16mm 16mm 18mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Calibri, Arial, sans-serif;
+      color: #1f2933;
+      font-size: 11pt;
+      line-height: 1.45;
+      margin: 0;
+    }
+    h1 { font-size: 22pt; color: #0f3d6e; margin: 0 0 6px; }
+    h2 {
+      font-size: 14pt;
+      color: #0f3d6e;
+      border-bottom: 2px solid #0f3d6e;
+      padding-bottom: 4px;
+      margin: 22px 0 10px;
+      page-break-after: avoid;
+    }
+    h3 { font-size: 12pt; color: #1a56a0; margin: 16px 0 6px; page-break-after: avoid; }
+    p { margin: 0 0 8px; }
+    .subtitle { color: #52606d; font-size: 11pt; margin-bottom: 4px; }
+    .meta { color: #7b8794; font-size: 9.5pt; margin-bottom: 18px; }
+    .box {
+      background: #f4f7fb;
+      border-left: 4px solid #0f3d6e;
+      padding: 10px 12px;
+      margin: 10px 0 14px;
+    }
+    .warn {
+      background: #fff6e8;
+      border-left: 4px solid #c05621;
+      padding: 10px 12px;
+      margin: 10px 0 14px;
+    }
+    .ok {
+      background: #edf8f1;
+      border-left: 4px solid #2f855a;
+      padding: 10px 12px;
+      margin: 10px 0 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      font-size: 10pt;
+      page-break-inside: avoid;
+    }
+    th {
+      background: #0f3d6e;
+      color: #fff;
+      text-align: left;
+      padding: 7px 8px;
+      font-weight: 600;
+    }
+    td {
+      border: 1px solid #d9e2ec;
+      padding: 7px 8px;
+      vertical-align: top;
+    }
+    tr:nth-child(even) td { background: #f8fafc; }
+    code, .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9.5pt;
+      background: #eef2f6;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .scenario {
+      border: 1px solid #d9e2ec;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 0 0 12px;
+      page-break-inside: avoid;
+    }
+    .tag {
+      display: inline-block;
+      background: #0f3d6e;
+      color: #fff;
+      font-size: 8.5pt;
+      padding: 2px 7px;
+      border-radius: 10px;
+      margin-right: 6px;
+      letter-spacing: 0.3px;
+    }
+    .tag-bug { background: #9b2c2c; }
+    .tag-opt { background: #6b7280; }
+    ol, ul { margin: 4px 0 10px 18px; padding: 0; }
+    li { margin: 3px 0; }
+    .footer-note { font-size: 9pt; color: #7b8794; margin-top: 20px; }
+  </style>
+</head>
+<body>
+
+  <h1>GSIS Squash Commit Title Standard</h1>
+  <p class="subtitle">How feature and bug pull requests get automatic commit titles on <code>base-v2</code></p>
+  <p class="meta">For the development team &nbsp;|&nbsp; Workflow: <code>.github/workflows/feature-commit-title.yml</code></p>
+
+  <div class="box">
+    <strong>Goal.</strong> Every squash merge into <code>base-v2</code> should have one clean commit title:
+    Jira id + global F sequence. Bug PRs also mark <code>BUG</code> and, when present, the related feature/story Jira
+    and a clickable link to that feature PR.
+  </div>
+
+  <h2>1. How it works</h2>
+  <ol>
+    <li>Developer opens a PR into <code>base-v2</code> from a named feature or bug branch.</li>
+    <li>GitHub Action reads the <strong>branch name</strong>, finds the next global <code>F</code> number on <code>base-v2</code>, and sets the <strong>PR title</strong>.</li>
+    <li>Reviewer squash-merges. GitHub uses the PR title as the squash commit message.</li>
+    <li>GitHub always appends the current PR number as <code>(#16)</code>. That is clickable on the commits page.</li>
+  </ol>
+  <p>The workflow does <strong>not</strong> rewrite git history. It only updates the PR title.</p>
+
+  <h2>2. Required GitHub repository settings</h2>
+  <p>Repo → <strong>Settings → General → Pull Requests</strong></p>
+  <table>
+    <tr><th>Setting</th><th>Value</th><th>Why</th></tr>
+    <tr><td>Allow squash merging</td><td>On</td><td>One commit per PR on <code>base-v2</code></td></tr>
+    <tr><td>Default squash commit message</td><td><strong>Pull request title</strong></td><td>Uses the auto-generated title</td></tr>
+    <tr><td>Allow merge commits</td><td><strong>Off</strong></td><td>Otherwise feature commits appear on <code>base-v2</code></td></tr>
+    <tr><td>Allow rebase merging</td><td>Off (recommended)</td><td>Keeps history linear and titles consistent</td></tr>
+  </table>
+  <div class="warn">
+    Always click <strong>Squash and merge</strong>. Do not use “Create a merge commit”.
+    A merge commit keeps every feature-branch commit on <code>base-v2</code>.
+  </div>
+
+  <h2>3. Branch naming</h2>
+  <table>
+    <tr><th>Type</th><th>Branch pattern</th><th>Example</th></tr>
+    <tr>
+      <td>Feature / story</td>
+      <td><code>feature/GSIS-&lt;storyId&gt;-&lt;short-name&gt;</code></td>
+      <td><code>feature/GSIS-3654-leave-api</code></td>
+    </tr>
+    <tr>
+      <td>Bug (general)</td>
+      <td><code>bug/fix/GSIS-&lt;bugId&gt;-&lt;short-name&gt;</code></td>
+      <td><code>bug/fix/GSIS-2875-null-list</code></td>
+    </tr>
+    <tr>
+      <td>Bug linked to a story</td>
+      <td><code>bug/fix/GSIS-&lt;bugId&gt;-GSIS-&lt;storyId&gt;</code></td>
+      <td><code>bug/fix/GSIS-2875-GSIS-3654</code></td>
+    </tr>
+  </table>
+  <p>The story id on a bug branch is <strong>optional</strong>. Use it only when the bug belongs to an existing feature/story (same id as <code>feature/GSIS-3654-...</code>).</p>
+
+  <h2>4. Global F sequence</h2>
+  <p><code>F</code> is a running number for the whole <code>base-v2</code> branch. It is not per Jira id.</p>
+  <table>
+    <tr><th>Merge order</th><th>PR</th><th>Commit title (before GitHub adds PR number)</th></tr>
+    <tr><td>1st merged PR</td><td>Feature GSIS-12345</td><td><code>GSIS-12345-F1</code></td></tr>
+    <tr><td>2nd merged PR</td><td>Feature GSIS-54852</td><td><code>GSIS-54852-F2</code></td></tr>
+    <tr><td>12th merged PR</td><td>Bug GSIS-2875 for story GSIS-3654</td><td><code>GSIS-2875-BUG-F12-GSIS-3654</code></td></tr>
+  </table>
+  <p>Open PRs are numbered in the order they were created. After a merge, remaining open PRs are retitled to the next F numbers.</p>
+
+  <h2>5. Scenarios</h2>
+
+  <div class="scenario">
+    <h3><span class="tag">S1</span> Feature pull request</h3>
+    <p><strong>Branch:</strong> <code>feature/GSIS-3654-leave-api</code></p>
+    <p><strong>PR title set by workflow:</strong> <code>GSIS-3654-F6</code></p>
+    <p><strong>After squash merge (GitHub adds PR number):</strong> <code>GSIS-3654-F6 (#11)</code></p>
+    <p><code>(#11)</code> is a clickable link to that feature PR on the commits page.</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag">S2</span> Next feature uses the next F number (different Jira)</h3>
+    <p><strong>Branch:</strong> <code>feature/GSIS-3214-employee-api</code></p>
+    <p><strong>PR title:</strong> <code>GSIS-3214-F7</code></p>
+    <p><strong>After squash:</strong> <code>GSIS-3214-F7 (#10)</code></p>
+    <p>F continues globally even though the Jira id changed.</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag tag-bug">S3</span> General bug (no story / feature id)</h3>
+    <p><strong>Branch:</strong> <code>bug/fix/GSIS-2875</code> or <code>bug/fix/GSIS-2875-null-list</code></p>
+    <p><strong>PR title:</strong> <code>GSIS-2875-BUG-F12</code></p>
+    <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12 (#16)</code></p>
+    <p>Use this for standalone bugs that are not tied to a feature branch.</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag tag-bug">S4</span> Bug linked to a feature/story Jira</h3>
+    <p><strong>Branch:</strong> <code>bug/fix/GSIS-2875-GSIS-3654</code></p>
+    <p>First id = bug ticket. Second id = story/feature ticket (same as <code>feature/GSIS-3654-...</code>).</p>
+    <p><strong>PR title:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654</code></p>
+    <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#16)</code></p>
+    <p>The story id is optional. If it is on the branch, it is included so the bug commit lines up with the feature git branch.</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag tag-bug">S5</span> Bug + story, and link the feature PR (same as #16)</h3>
+    <p>When the bug branch contains a story id, the workflow finds the matching feature branch/PR
+      (<code>feature/GSIS-3654-...</code> or the squash commit already on <code>base-v2</code>)
+      and puts that PR number in the title. GitHub still appends the bug PR number.</p>
+    <p><strong>PR title set by workflow:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#6)</code></p>
+    <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)</code></p>
+    <table>
+      <tr><th>Part</th><th>Meaning</th><th>Clickable?</th></tr>
+      <tr><td><code>GSIS-2875</code></td><td>Bug Jira</td><td>No (text)</td></tr>
+      <tr><td><code>BUG</code></td><td>This PR is a bugfix</td><td>—</td></tr>
+      <tr><td><code>F12</code></td><td>12th squash on <code>base-v2</code></td><td>—</td></tr>
+      <tr><td><code>GSIS-3654</code></td><td>Related feature/story Jira and git branch</td><td>No (text)</td></tr>
+      <tr><td><code>(#6)</code></td><td>Feature PR for <code>feature/GSIS-3654-...</code></td><td>Yes, like #16</td></tr>
+      <tr><td><code>(#16)</code></td><td>This bug PR (added by GitHub)</td><td>Yes</td></tr>
+    </table>
+    <p>If no feature PR/branch is found, the extra <code>(#6)</code> is omitted. The story id in the title is still kept.</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag tag-opt">S6</span> Several open PRs at once</h3>
+    <p>PRs are titled in created-at order.</p>
+    <table>
+      <tr><th>Open PR (created order)</th><th>Assigned title</th></tr>
+      <tr><td>Feature GSIS-4145</td><td><code>GSIS-4145-F9</code></td></tr>
+      <tr><td>Feature GSIS-2541</td><td><code>GSIS-2541-F10</code></td></tr>
+      <tr><td>Bug GSIS-1254</td><td><code>GSIS-1254-BUG-F11</code></td></tr>
+    </table>
+    <p>When F9 is merged, the workflow runs again and remaining open PRs move to F10, F11, …</p>
+  </div>
+
+  <div class="scenario">
+    <h3><span class="tag tag-opt">S7</span> Draft PRs</h3>
+    <p>Draft PRs are skipped. When the PR is marked ready for review, it gets the next F title.</p>
+  </div>
+
+  <h2>6. What you must not do</h2>
+  <table>
+    <tr><th>Action</th><th>Result</th></tr>
+    <tr>
+      <td>Create a merge commit instead of squash</td>
+      <td>Feature-branch commits appear on <code>base-v2</code> (example: “GSIS-7894 customer API implement” plus “Merge pull request #2”). Title standard is lost.</td>
+    </tr>
+    <tr>
+      <td>Amend / force-push <code>base-v2</code> to strip <code>(#16)</code></td>
+      <td>A shallow checkout can turn <code>base-v2</code> into a single root commit. GitHub then shows only one commit and cannot open new PRs (“No common ancestor”).</td>
+    </tr>
+    <tr>
+      <td>Wrong branch name (no <code>GSIS-</code> id)</td>
+      <td>Workflow skips the PR. Title is not generated.</td>
+    </tr>
+    <tr>
+      <td>Edit the squash title by hand and drop the Jira/F part</td>
+      <td>The next F number may be wrong because the workflow counts titles matching the pattern.</td>
+    </tr>
+  </table>
+
+  <h2>7. Developer checklist</h2>
+  <ol>
+    <li>Create the branch with the correct prefix and Jira id(s).</li>
+    <li>Open a PR into <code>base-v2</code> (not draft, or mark ready when it is).</li>
+    <li>Wait for the Action to set the PR title. Do not rename it unless the Action failed.</li>
+    <li>Review and squash-merge. Leave the commit title as the PR title.</li>
+    <li>GitHub will add <code>(#PR)</code>. That is expected. Do not try to remove it with a history rewrite.</li>
+  </ol>
+
+  <div class="ok">
+    <strong>Quick examples to show the team</strong><br />
+    Feature: <code>feature/GSIS-3654-leave-api</code> → <code>GSIS-3654-F6 (#11)</code><br />
+    General bug: <code>bug/fix/GSIS-1254-data-empty</code> → <code>GSIS-1254-BUG-F11 (#9)</code><br />
+    Bug + story: <code>bug/fix/GSIS-2875-GSIS-3654</code> → <code>GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)</code>
+  </div>
+
+  <h2>8. FAQ</h2>
+  <p><strong>Why does the commit show (#16)?</strong><br />
+    GitHub always appends the squash PR number. There is no repository setting to turn that off. It is useful because it links the commit to the PR.</p>
+  <p><strong>Can we hide (#16)?</strong><br />
+    You can delete it in the squash dialog before confirming, but the team standard is to keep it. Do not force-push <code>base-v2</code> to strip it.</p>
+  <p><strong>Why BUG in the title?</strong><br />
+    So bugfixes are visible in history next to feature F commits, and so the id is the bug Jira, not the story Jira.</p>
+  <p><strong>What if the bug is not related to any feature?</strong><br />
+    Omit the second Jira from the branch. Title stays <code>GSIS-2875-BUG-F12</code>.</p>
+  <p><strong>What if the feature PR is not found?</strong><br />
+    The story id is still in the title. Only the extra clickable <code>(#featurePR)</code> is missing.</p>
+  <p><strong>Does this apply only to base-v2?</strong><br />
+    Yes. The workflow runs on PRs and pushes targeting <code>base-v2</code>.</p>
+
+  <p class="footer-note">
+    Source of truth: <code>.github/workflows/feature-commit-title.yml</code> on <code>base-v2</code>.
+    Merge workflow updates onto <code>base-v2</code> before new PRs can use new title rules.
+  </p>
+
+</body>
+</html>
