@@ -1,11 +1,19 @@
 name: Auto squash commit title
 
-# Sets the PR title to GSIS-<jira>-F<n>, which GitHub uses as the squash
-# commit message when squash merging is set to "Pull request title".
+# Sets the PR title used as the squash commit message when squash merging
+# is set to "Pull request title".
 #
-# Sequence is global on base-v2:
-#   1st merged PR  -> GSIS-12345-F1
-#   2nd merged PR  -> GSIS-54852-F2
+# Feature branch feature/GSIS-8574-...
+#   -> GSIS-8574-F12
+#
+# Bug branch bug/fix/GSIS-2875  (or bug/fix/GSIS-2875-description)
+#   -> GSIS-2875-BUG-F12
+#
+# Bug linked to a story: bug/fix/GSIS-2875-GSIS-8574
+#   -> GSIS-2875-BUG-F12-GSIS-8574
+# Story id is optional (general bugs have no feature branch).
+#
+# Sequence F is global on base-v2.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -27,22 +35,67 @@ jobs:
   set-squash-title:
     runs-on: ubuntu-latest
     steps:
-      - name: Assign GSIS-xxxxx-Fn titles
+      - name: Assign GSIS squash titles
         uses: actions/github-script@v7
         with:
           script: |
             const baseBranch = 'base-v2';
-            const titleRe = /^(GSIS-\d+)-F(\d+)(?:\s*\(#\d+\))?$/i;
-            const branchRe = /(?:^|\/)(?:feature|bugfix)\/(GSIS-\d+)/i;
+            const titleRe =
+              /^(GSIS-\d+)(?:-BUG)?-F(\d+)(?:-GSIS-\d+)?(?:\s*\(#\d+\))?$/i;
+            const featureBranchRe = /(?:^|\/)feature\/(GSIS-\d+)/i;
+            const bugBranchRe =
+              /(?:^|\/)(?:bug\/fix|bugfix)\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
+            const bugTitleRe =
+              /^(GSIS-\d+)-BUG-F\d+(?:-(GSIS-\d+))?/i;
             const anyJiraRe = /(GSIS-\d+)/i;
 
-            function jiraIdFrom(ref, fallbackTitle) {
-              const fromBranch = ref && ref.match(branchRe);
-              if (fromBranch) {
-                return fromBranch[1].toUpperCase();
+            function ticketFrom(ref, fallbackTitle) {
+              if (ref) {
+                const bug = ref.match(bugBranchRe);
+                if (bug) {
+                  return {
+                    kind: 'bug',
+                    id: bug[1].toUpperCase(),
+                    storyId: bug[2] ? bug[2].toUpperCase() : null
+                  };
+                }
+                const feature = ref.match(featureBranchRe);
+                if (feature) {
+                  return {
+                    kind: 'feature',
+                    id: feature[1].toUpperCase(),
+                    storyId: null
+                  };
+                }
               }
-              const fromTitle = fallbackTitle && fallbackTitle.match(anyJiraRe);
-              return fromTitle ? fromTitle[1].toUpperCase() : null;
+
+              const bugTitle = fallbackTitle && fallbackTitle.match(bugTitleRe);
+              if (bugTitle) {
+                return {
+                  kind: 'bug',
+                  id: bugTitle[1].toUpperCase(),
+                  storyId: bugTitle[2] ? bugTitle[2].toUpperCase() : null
+                };
+              }
+
+              const fromTitle =
+                fallbackTitle && fallbackTitle.match(anyJiraRe);
+              return fromTitle
+                ? {
+                    kind: 'feature',
+                    id: fromTitle[1].toUpperCase(),
+                    storyId: null
+                  }
+                : null;
+            }
+
+            function buildTitle(ticket, n) {
+              if (ticket.kind === 'bug') {
+                return ticket.storyId
+                  ? `${ticket.id}-BUG-F${n}-${ticket.storyId}`
+                  : `${ticket.id}-BUG-F${n}`;
+              }
+              return `${ticket.id}-F${n}`;
             }
 
             async function highestMergedFeatureNumber() {
@@ -91,15 +144,15 @@ jobs:
             const updated = [];
 
             for (const pr of openPrs) {
-              const jiraId = jiraIdFrom(pr.head.ref, pr.title);
-              if (!jiraId) {
+              const ticket = ticketFrom(pr.head.ref, pr.title);
+              if (!ticket) {
                 core.warning(
                   `PR #${pr.number} branch ${pr.head.ref} has no GSIS id; skipped.`
                 );
                 continue;
               }
 
-              const nextTitle = `${jiraId}-F${next}`;
+              const nextTitle = buildTitle(ticket, next);
               next += 1;
 
               if (pr.title !== nextTitle) {
@@ -114,7 +167,7 @@ jobs:
             }
 
             if (updated.length === 0) {
-              core.notice('No open feature PRs to retitle.');
+              core.notice('No open PRs to retitle.');
               return;
             }
 
