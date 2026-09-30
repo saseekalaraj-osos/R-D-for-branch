@@ -5,6 +5,7 @@ import com.sis.git.branch.r.d.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -12,6 +13,10 @@ import java.util.List;
 public class UserServiceImpl implements UserService {
     @Override
     public List<UserDto> getAll() {
+        List<UserDto> userDtos = new ArrayList<>();
+        UserDto userDto = new UserDto();
+        userDto.setAge("25");
+        userDto.setName("Naveen");
         return List.of(null);
     }
 }
