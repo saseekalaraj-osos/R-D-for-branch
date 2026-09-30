@@ -5,6 +5,7 @@ import com.sis.git.branch.r.d.service.StockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -12,6 +13,7 @@ import java.util.List;
 public class StockServiceImpl implements StockService {
     @Override
     public List<StockDto> getAll() {
-        return List.of(null);
+        List<StockDto> stockDtos = new ArrayList<>();
+        return stockDtos;
     }
 }
