@@ -1,11 +1,22 @@
 name: Auto squash commit title
 
-# Sets the PR title to GSIS-<jira>-F<n>, which GitHub uses as the squash
-# commit message when squash merging is set to "Pull request title".
+# Sets the PR title used as the squash commit message when squash merging
+# is set to "Pull request title".
 #
-# Sequence is global on base-v2:
-#   1st merged PR  -> GSIS-12345-F1
-#   2nd merged PR  -> GSIS-54852-F2
+# Feature branch feature/GSIS-8574-...
+#   -> GSIS-8574-F12
+#
+# Bug branch bug/fix/GSIS-2875  (or bug/fix/GSIS-2875-description)
+#   -> GSIS-2875-BUG-F12
+#
+# Bug linked to a story: bug/fix/GSIS-2875-GSIS-3654
+#   -> GSIS-2875-BUG-F12-GSIS-3654 (#6)
+# (#6) is the feature PR for feature/GSIS-3654-... so it click-links
+# the same way GitHub adds the bug PR on squash:
+#   GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)
+# Story id is optional (general bugs have no feature branch).
+#
+# Sequence F is global on base-v2.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -27,26 +38,69 @@ jobs:
   set-squash-title:
     runs-on: ubuntu-latest
     steps:
-      - name: Assign GSIS-xxxxx-Fn titles
+      - name: Assign GSIS squash titles
         uses: actions/github-script@v7
         with:
           script: |
             const baseBranch = 'base-v2';
-            const titleRe = /^(GSIS-\d+)-F(\d+)(?:\s*\(#\d+\))?$/i;
-            const branchRe = /(?:^|\/)(?:feature|bugfix)\/(GSIS-\d+)/i;
+            const titleRe =
+              /^(GSIS-\d+)(?:-BUG)?-F(\d+)(?:-GSIS-\d+)?(?:\s*\(#\d+\))*$/i;
+            const featureBranchRe = /(?:^|\/)feature\/(GSIS-\d+)/i;
+            const bugBranchRe =
+              /(?:^|\/)bug\/fix\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
+            const bugTitleRe =
+              /^(GSIS-\d+)-BUG-F\d+(?:-(GSIS-\d+))?/i;
             const anyJiraRe = /(GSIS-\d+)/i;
 
-            function jiraIdFrom(ref, fallbackTitle) {
-              const fromBranch = ref && ref.match(branchRe);
-              if (fromBranch) {
-                return fromBranch[1].toUpperCase();
+            function ticketFrom(ref, fallbackTitle) {
+              if (ref) {
+                const bug = ref.match(bugBranchRe);
+                if (bug) {
+                  return {
+                    kind: 'bug',
+                    id: bug[1].toUpperCase(),
+                    storyId: bug[2] ? bug[2].toUpperCase() : null
+                  };
+                }
+                const feature = ref.match(featureBranchRe);
+                if (feature) {
+                  return {
+                    kind: 'feature',
+                    id: feature[1].toUpperCase(),
+                    storyId: null
+                  };
+                }
               }
-              const fromTitle = fallbackTitle && fallbackTitle.match(anyJiraRe);
-              return fromTitle ? fromTitle[1].toUpperCase() : null;
+
+              const bugTitle = fallbackTitle && fallbackTitle.match(bugTitleRe);
+              if (bugTitle) {
+                return {
+                  kind: 'bug',
+                  id: bugTitle[1].toUpperCase(),
+                  storyId: bugTitle[2] ? bugTitle[2].toUpperCase() : null
+                };
+              }
+
+              const fromTitle =
+                fallbackTitle && fallbackTitle.match(anyJiraRe);
+              return fromTitle
+                ? {
+                    kind: 'feature',
+                    id: fromTitle[1].toUpperCase(),
+                    storyId: null
+                  }
+                : null;
             }
 
-            async function highestMergedFeatureNumber() {
-              let highest = 0;
+            function isFeatureBranchForStory(ref, storyId) {
+              return new RegExp(
+                `(?:^|/)feature/${storyId}(?:$|[-_/])`,
+                'i'
+              ).test(ref || '');
+            }
+
+            async function listBaseCommits() {
+              const commits = [];
               for (let page = 1; page <= 50; page++) {
                 const result = await github.rest.repos.listCommits({
                   owner: context.repo.owner,
@@ -58,48 +112,124 @@ jobs:
                 if (result.data.length === 0) {
                   break;
                 }
-                for (const commit of result.data) {
-                  const title = commit.commit.message.split('\n')[0].trim();
-                  const match = title.match(titleRe);
-                  if (match) {
-                    highest = Math.max(highest, Number(match[2]));
-                  }
-                }
+                commits.push(...result.data);
                 if (result.data.length < 100) {
                   break;
+                }
+              }
+              return commits;
+            }
+
+            async function listBasePullRequests() {
+              return github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'all',
+                base: baseBranch,
+                per_page: 100
+              });
+            }
+
+            function featurePrFromCommits(storyId, commits) {
+              const commitRe = new RegExp(
+                `^${storyId}-F\\d+(?:-GSIS-\\d+)?(?:\\s*\\(#(\\d+)\\))+`,
+                'i'
+              );
+              for (const commit of commits) {
+                const title = commit.commit.message.split('\n')[0].trim();
+                const match = title.match(commitRe);
+                if (match) {
+                  return Number(match[1]);
+                }
+              }
+              return null;
+            }
+
+            async function featurePrNumber(storyId, allPrs, commits) {
+              const featurePrs = allPrs.filter((pr) =>
+                isFeatureBranchForStory(pr.head.ref, storyId)
+              );
+              const merged = featurePrs
+                .filter((pr) => pr.merged_at)
+                .sort(
+                  (a, b) => new Date(b.merged_at) - new Date(a.merged_at)
+                );
+              if (merged.length > 0) {
+                return merged[0].number;
+              }
+
+              const open = featurePrs.filter(
+                (pr) => pr.state === 'open' && !pr.draft
+              );
+              if (open.length > 0) {
+                return open[0].number;
+              }
+
+              const fromCommit = featurePrFromCommits(storyId, commits);
+              if (fromCommit) {
+                return fromCommit;
+              }
+
+              const refs = await github.rest.git.listMatchingRefs({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/feature/${storyId}`
+              });
+              if (refs.data.length === 0) {
+                core.warning(
+                  `No feature/${storyId} branch or PR found to link.`
+                );
+              }
+              return null;
+            }
+
+            function highestMergedFeatureNumber(commits) {
+              let highest = 0;
+              for (const commit of commits) {
+                const title = commit.commit.message.split('\n')[0].trim();
+                const match = title.match(titleRe);
+                if (match) {
+                  highest = Math.max(highest, Number(match[2]));
                 }
               }
               return highest;
             }
 
-            async function openPullRequests() {
-              const pulls = await github.paginate(github.rest.pulls.list, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: 'open',
-                base: baseBranch,
-                per_page: 100
-              });
-              return pulls
-                .filter((pr) => !pr.draft)
-                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-            }
+            const commits = await listBaseCommits();
+            const allPrs = await listBasePullRequests();
+            const openPrs = allPrs
+              .filter((pr) => pr.state === 'open' && !pr.draft)
+              .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-            const mergedMax = await highestMergedFeatureNumber();
-            const openPrs = await openPullRequests();
-            let next = mergedMax + 1;
+            let next = highestMergedFeatureNumber(commits) + 1;
             const updated = [];
 
             for (const pr of openPrs) {
-              const jiraId = jiraIdFrom(pr.head.ref, pr.title);
-              if (!jiraId) {
+              const ticket = ticketFrom(pr.head.ref, pr.title);
+              if (!ticket) {
                 core.warning(
                   `PR #${pr.number} branch ${pr.head.ref} has no GSIS id; skipped.`
                 );
                 continue;
               }
 
-              const nextTitle = `${jiraId}-F${next}`;
+              let nextTitle;
+              if (ticket.kind === 'bug') {
+                nextTitle = `${ticket.id}-BUG-F${next}`;
+                if (ticket.storyId) {
+                  nextTitle += `-${ticket.storyId}`;
+                  const featurePr = await featurePrNumber(
+                    ticket.storyId,
+                    allPrs,
+                    commits
+                  );
+                  if (featurePr && featurePr !== pr.number) {
+                    nextTitle += ` (#${featurePr})`;
+                  }
+                }
+              } else {
+                nextTitle = `${ticket.id}-F${next}`;
+              }
               next += 1;
 
               if (pr.title !== nextTitle) {
@@ -114,7 +244,7 @@ jobs:
             }
 
             if (updated.length === 0) {
-              core.notice('No open feature PRs to retitle.');
+              core.notice('No open PRs to retitle.');
               return;
             }
 
