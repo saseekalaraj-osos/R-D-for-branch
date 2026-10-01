@@ -3,15 +3,15 @@ name: Auto squash commit title
 # Sets the PR title used as the squash commit message when squash merging
 # is set to "Pull request title".
 #
-# Feature branch feature/GSIS-8574-...
-#   -> GSIS-8574-F12
+# Feature branch base/feature/GSIS-26369-enrol-modification
+#   -> GSIS-26369-F12
 #
-# Bug branch bug/fix/GSIS-2875  (or bug/fix/GSIS-2875-description)
-#   -> GSIS-2875-BUG-F12
+# Bug branch base/bugfix/GSIS-25819-offer-letter-status-response-gcet
+#   -> GSIS-25819-BUG-F12
 #
-# Bug linked to a story: bug/fix/GSIS-2875-GSIS-3654
+# Bug linked to a story: base/bugfix/GSIS-2875-GSIS-3654-...
 #   -> GSIS-2875-BUG-F12-GSIS-3654 (#6)
-# (#6) is the feature PR for feature/GSIS-3654-... so it click-links
+# (#6) is the feature PR for base/feature/GSIS-3654-... so it click-links
 # the same way GitHub adds the bug PR on squash:
 #   GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)
 # Story id is optional (general bugs have no feature branch).
@@ -45,9 +45,9 @@ jobs:
             const baseBranch = 'base-v2';
             const titleRe =
               /^(GSIS-\d+)(?:-BUG)?-F(\d+)(?:-GSIS-\d+)?(?:\s*\(#\d+\))*$/i;
-            const featureBranchRe = /(?:^|\/)feature\/(GSIS-\d+)/i;
+            const featureBranchRe = /(?:^|\/)base\/feature\/(GSIS-\d+)/i;
             const bugBranchRe =
-              /(?:^|\/)bug\/fix\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
+              /(?:^|\/)base\/bugfix\/(GSIS-\d+)(?:-(GSIS-\d+))?/i;
             const bugTitleRe =
               /^(GSIS-\d+)-BUG-F\d+(?:-(GSIS-\d+))?/i;
             const anyJiraRe = /(GSIS-\d+)/i;
@@ -114,7 +114,7 @@ jobs:
 
             function isFeatureBranchForStory(ref, storyId) {
               return new RegExp(
-                `(?:^|/)feature/${storyId}(?:$|[-_/])`,
+                `(?:^|/)base/feature/${storyId}(?:$|[-_/])`,
                 'i'
               ).test(ref || '');
             }
@@ -209,14 +209,14 @@ jobs:
               const refs = await github.rest.git.listMatchingRefs({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: `heads/feature/${storyId}`
+                ref: `heads/base/feature/${storyId}`
               });
               if (refs.data.length === 0) {
                 log(
-                  `scenario=feature_pr_not_found story=${storyId} reason=no feature/${storyId} branch or PR`
+                  `scenario=feature_pr_not_found story=${storyId} reason=no base/feature/${storyId} branch or PR`
                 );
                 core.warning(
-                  `No feature/${storyId} branch or PR found to link.`
+                  `No base/feature/${storyId} branch or PR found to link.`
                 );
               } else {
                 log(
