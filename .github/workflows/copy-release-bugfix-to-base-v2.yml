@@ -1,12 +1,12 @@
 name: Copy release bugfix to base-v2
 
-# After a bug/fix PR is merged into release/*, cherry-pick that merge onto
+# After a base/bugfix PR is merged into release/*, cherry-pick that merge onto
 # base-v2 and push it immediately (no waiting for a follow-up PR).
 #
 # Branching stays the same as the rest of the repo:
-#   feature/GSIS-<story>-...
-#   bug/fix/GSIS-<bug>
-#   bug/fix/GSIS-<bug>-GSIS-<story>
+#   base/feature/GSIS-<story>-...
+#   base/bugfix/GSIS-<bug>-...
+#   base/bugfix/GSIS-<bug>-GSIS-<story>-...
 #
 # Commit title on base-v2:
 #   GSIS-<bug>-BUG-F<n>
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       release_pr:
-        description: Merged release bug/fix PR number to copy to base-v2
+        description: Merged release base/bugfix PR number to copy to base-v2
         required: true
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cherry-pick release bug/fix onto base-v2
+      - name: Cherry-pick release base/bugfix onto base-v2
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -107,11 +107,11 @@ jobs:
               log "scenario=stop_copy_branch_loop head=${PR_HEAD} reason=already a base-v2 copy branch; skip to avoid loop"
               exit 0
               ;;
-            bug/fix/*)
-              log "scenario=head_ok head=${PR_HEAD} reason=bug/fix/GSIS-... source branch"
+            base/bugfix/*)
+              log "scenario=head_ok head=${PR_HEAD} reason=base/bugfix/GSIS-... source branch"
               ;;
             *)
-              log "scenario=stop_not_bugfix_head head=${PR_HEAD} reason=only bug/fix/GSIS-... PRs are copied"
+              log "scenario=stop_not_bugfix_head head=${PR_HEAD} reason=only base/bugfix/GSIS-... PRs are copied"
               exit 0
               ;;
           esac
@@ -120,7 +120,7 @@ jobs:
           STORY_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | sed -n '2p' | tr 'a-z' 'A-Z')
           log "scenario=parse_ids head=${PR_HEAD} bug_id=${BUG_ID:-<none>} story_id=${STORY_ID:-<none>}"
           if [ -z "$BUG_ID" ]; then
-            log "scenario=stop_no_gsis head=${PR_HEAD} reason=no GSIS id on the bug/fix branch name"
+            log "scenario=stop_no_gsis head=${PR_HEAD} reason=no GSIS id on the base/bugfix branch name"
             exit 0
           fi
           if [ -n "${STORY_ID:-}" ] && [ "$STORY_ID" != "$BUG_ID" ]; then
@@ -206,7 +206,7 @@ jobs:
             log "scenario=title_append_story title=${TITLE}"
             FEATURE_PR=$(gh pr list --repo "${OWNER}/${REPO}" --state merged --base "$TARGET" --limit 100 \
               --json number,headRefName \
-              --jq "[.[] | select(.headRefName | test(\"feature/${STORY_ID}\"; \"i\"))][0].number // empty" || true)
+              --jq "[.[] | select(.headRefName | test(\"base/feature/${STORY_ID}\"; \"i\"))][0].number // empty" || true)
             if [ -n "${FEATURE_PR:-}" ]; then
               log "scenario=feature_pr_from_merged_pr story=${STORY_ID} feature_pr=#${FEATURE_PR}"
             else
@@ -219,7 +219,7 @@ jobs:
               if [ -n "${FEATURE_PR:-}" ]; then
                 log "scenario=feature_pr_from_commit_title story=${STORY_ID} feature_pr=#${FEATURE_PR}"
               else
-                log "scenario=feature_pr_not_found story=${STORY_ID} reason=no feature/${STORY_ID} PR or commit on ${TARGET}"
+                log "scenario=feature_pr_not_found story=${STORY_ID} reason=no base/feature/${STORY_ID} PR or commit on ${TARGET}"
               fi
             fi
             if [ -n "${FEATURE_PR:-}" ]; then
