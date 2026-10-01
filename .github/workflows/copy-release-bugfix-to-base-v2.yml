@@ -1,16 +1,16 @@
 name: Copy release bugfix to base-v2
 
 # After a bug/fix PR is merged into release/*, cherry-pick that merge onto
-# a new bug/fix/GSIS-... branch from base-v2 and open a PR into base-v2.
+# base-v2 and push it immediately (no waiting for a follow-up PR).
 #
 # Branching stays the same as the rest of the repo:
 #   feature/GSIS-<story>-...
 #   bug/fix/GSIS-<bug>
 #   bug/fix/GSIS-<bug>-GSIS-<story>
 #
-# The source branch already exists (it was merged to release), so the
-# base-v2 copy uses the same bug/fix/GSIS-... name with -to-base-v2.
-# Title workflow still reads bug id and optional story id from that name.
+# Commit title on base-v2:
+#   GSIS-<bug>-BUG-F<n>
+#   GSIS-<bug>-BUG-F<n>-GSIS-<story> (#featurePR)
 #
 # Cherry-pick -x; -m 1 only when the release merge has two parents.
 # Squash-merged release PRs have one parent: cherry-pick -x with no -m.
@@ -33,7 +33,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: copy-release-bugfix-${{ github.event.pull_request.number || inputs.release_pr }}
+  group: copy-release-bugfix-to-base-v2
   cancel-in-progress: false
 
 jobs:
@@ -102,6 +102,7 @@ jobs:
           esac
 
           BUG_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | head -1 | tr 'a-z' 'A-Z')
+          STORY_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | sed -n '2p' | tr 'a-z' 'A-Z')
           if [ -z "$BUG_ID" ]; then
             echo "No GSIS id on ${PR_HEAD}. Stop."
             exit 0
@@ -116,23 +117,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "$TARGET" "$PR_BASE"
 
-          COPY_BRANCH="${PR_HEAD}-to-base-v2"
-          if git ls-remote --exit-code --heads origin "$COPY_BRANCH" >/dev/null 2>&1; then
-            COPY_BRANCH="${PR_HEAD}-to-base-v2-pr-${PR_NUMBER}"
-          fi
-
-          EXISTING=$(gh pr list --base "$TARGET" --head "$COPY_BRANCH" --state open --json number --jq '.[0].number' || true)
-          if [ -n "${EXISTING:-}" ]; then
-            echo "Open base-v2 PR #${EXISTING} already exists."
-            gh pr comment "$PR_NUMBER" --body "Copy to \`${TARGET}\` already open: #${EXISTING}"
-            exit 0
-          fi
-
-          git switch -c "$COPY_BRANCH" "origin/${TARGET}"
+          WORK_BRANCH="copy-${BUG_ID}-to-${TARGET}-pr-${PR_NUMBER}"
+          git switch -c "$WORK_BRANCH" "origin/${TARGET}"
 
           PARENTS=$(git rev-list --parents -n 1 "$PR_SHA")
           PARENT_COUNT=$(($(echo "$PARENTS" | wc -w) - 1))
-          echo "Picking ${PR_SHA} from ${PR_BASE} (${PARENT_COUNT} parent(s)) onto ${COPY_BRANCH}"
+          echo "Picking ${PR_SHA} from ${PR_BASE} (${PARENT_COUNT} parent(s)) onto ${TARGET}"
 
           set +e
           if [ "$PARENT_COUNT" -ge 2 ]; then
@@ -147,46 +137,65 @@ jobs:
             if git diff --cached --quiet && git diff --quiet; then
               git cherry-pick --skip || git cherry-pick --abort || true
               gh pr comment "$PR_NUMBER" --body \
-                "The ${PR_BASE} bug/fix is already on \`${TARGET}\` (empty cherry-pick of \`${PR_SHA}\`)."
+                "The ${PR_BASE} bug/fix is already on \`${TARGET}\` (empty cherry-pick of \`${PR_SHA}\`)." || true
               echo "Empty cherry-pick; already on ${TARGET}."
               exit 0
             fi
             git cherry-pick --abort || true
             gh pr comment "$PR_NUMBER" --body \
-              "Could not auto-copy this ${PR_BASE} bug/fix to \`${TARGET}\` (conflicts on \`${PR_SHA}\`). Cherry-pick it onto \`${TARGET}\` by hand:
+              "Could not auto-copy this ${PR_BASE} bug/fix onto \`${TARGET}\` (conflicts on \`${PR_SHA}\`). Cherry-pick it by hand:
 
           \`\`\`
-          git switch -c ${COPY_BRANCH} origin/${TARGET}
+          git switch ${TARGET}
           git cherry-pick -x $([ "$PARENT_COUNT" -ge 2 ] && echo "-m 1 ") ${PR_SHA}
-          \`\`\`"
+          git push origin ${TARGET}
+          \`\`\`" || true
             echo "Cherry-pick conflicted."
             exit 1
           fi
 
-          git push origin "HEAD:refs/heads/${COPY_BRANCH}"
+          HIGHEST=$(git log "origin/${TARGET}" --format=%s \
+            | grep -oiE 'GSIS-[0-9]+(-BUG)?-F[0-9]+' \
+            | grep -oiE 'F[0-9]+' \
+            | tr -d 'Ff' \
+            | sort -n \
+            | tail -1)
+          NEXT=$(( ${HIGHEST:-0} + 1 ))
+          TITLE="${BUG_ID}-BUG-F${NEXT}"
+          if [ -n "${STORY_ID:-}" ] && [ "$STORY_ID" != "$BUG_ID" ]; then
+            TITLE="${TITLE}-${STORY_ID}"
+            FEATURE_PR=$(gh pr list --repo "${OWNER}/${REPO}" --state merged --base "$TARGET" --limit 100 \
+              --json number,headRefName \
+              --jq "[.[] | select(.headRefName | test(\"feature/${STORY_ID}\"; \"i\"))][0].number // empty" || true)
+            if [ -z "${FEATURE_PR:-}" ]; then
+              FEATURE_PR=$(git log "origin/${TARGET}" --format=%s \
+                | grep -iE "^${STORY_ID}-F[0-9]+" \
+                | grep -oE '\(#([0-9]+)\)' \
+                | head -1 \
+                | tr -d '(#) ' || true)
+            fi
+            if [ -n "${FEATURE_PR:-}" ]; then
+              TITLE="${TITLE} (#${FEATURE_PR})"
+            fi
+          fi
 
-          TITLE="${BUG_ID}"
-          BODY=$(cat <<EOF
-          Automatic copy of release bug/fix **${BUG_ID}** onto \`${TARGET}\`.
+          git commit --amend -m "$TITLE" -m "Copied from ${PR_URL} (\`${PR_SHA}\`)."
 
-          - Source PR: ${PR_URL}
-          - Source branch: \`${PR_HEAD}\`
-          - Copy branch: \`${COPY_BRANCH}\`
-          - Release branch: \`${PR_BASE}\`
-          - Cherry-picked: \`${PR_SHA}\` (\`cherry-pick -x\`$( [ "$PARENT_COUNT" -ge 2 ] && echo " -m 1" ))
+          git push origin "HEAD:refs/heads/${TARGET}"
+          LAND_SHA=$(git rev-parse HEAD)
 
-          Squash-merge this PR so \`base-v2\` keeps the standard \`GSIS-xxxxx-BUG-Fn\` title.
-          EOF
-          )
-
-          NEW_PR=$(gh pr create \
-            --repo "${OWNER}/${REPO}" \
-            --base "$TARGET" \
-            --head "$COPY_BRANCH" \
-            --title "$TITLE" \
-            --body "$BODY")
+          OPEN_COPIES=$(gh pr list --repo "${OWNER}/${REPO}" --base "$TARGET" --state open \
+            --json number,headRefName \
+            --jq ".[] | select(.headRefName | test(\"-to-base-v2\")) | .number" || true)
+          if [ -n "${OPEN_COPIES:-}" ]; then
+            while IFS= read -r COPY_PR; do
+              [ -z "$COPY_PR" ] && continue
+              gh pr close "$COPY_PR" --repo "${OWNER}/${REPO}" \
+                --comment "Landed directly on \`${TARGET}\` as \`${TITLE}\` (\`${LAND_SHA}\`)." || true
+            done <<< "$OPEN_COPIES"
+          fi
 
           gh pr comment "$PR_NUMBER" --body \
-            "Copied this ${PR_BASE} bug/fix to \`${TARGET}\`: ${NEW_PR}"
+            "Copied this ${PR_BASE} bug/fix onto \`${TARGET}\` immediately: \`${TITLE}\` (\`${LAND_SHA}\`)." || true
 
-          echo "Opened ${NEW_PR}"
+          echo "Pushed ${TITLE} to ${TARGET} (${LAND_SHA})"
