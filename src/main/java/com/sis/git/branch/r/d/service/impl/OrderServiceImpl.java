@@ -13,7 +13,7 @@ import java.util.List;
 public class OrderServiceImpl implements OrderService {
     @Override
     public List<OrderDto> getAll() {
-        List<OrderDto> orderDtos = new ArrayList<>();//added some comments
+        List<OrderDto> orderDtos = new ArrayList<>();//added some comments newly
         return orderDtos;
     }
 }
