@@ -17,17 +17,9 @@ name: Copy release bugfix to base-v2
 #
 # This file must exist on the release branch as well as base-v2.
 # GitHub only runs pull_request workflows from the PR base (release/*).
-# A push trigger on release/* covers squash merges once the file is there.
 on:
   pull_request:
     types: [closed]
-    branches:
-      - 'release/**'
-  pull_request_target:
-    types: [closed]
-    branches:
-      - 'release/**'
-  push:
     branches:
       - 'release/**'
   workflow_dispatch:
@@ -48,7 +40,6 @@ jobs:
   copy-to-base-v2:
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
       github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
@@ -88,19 +79,6 @@ jobs:
             PR_BASE=$(echo "$PR_JSON" | jq -r '.base.ref')
             PR_SHA=$(echo "$PR_JSON" | jq -r '.merge_commit_sha')
             PR_URL=$(echo "$PR_JSON" | jq -r '.html_url')
-          elif [ "$EVENT_NAME" = "push" ]; then
-            SHA="${{ github.sha }}"
-            PR_JSON=$(gh api -H "Accept: application/vnd.github.groot-preview+json" \
-              "repos/${OWNER}/${REPO}/commits/${SHA}/pulls" | jq '[.[] | select(.merged_at != null and (.base.ref | startswith("release/"))) ] | .[0]')
-            if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "null" ]; then
-              echo "No merged release PR for ${SHA}. Stop."
-              exit 0
-            fi
-            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
-            PR_HEAD=$(echo "$PR_JSON" | jq -r '.head.ref')
-            PR_BASE=$(echo "$PR_JSON" | jq -r '.base.ref')
-            PR_SHA=$(echo "$PR_JSON" | jq -r '.merge_commit_sha')
-            PR_URL=$(echo "$PR_JSON" | jq -r '.html_url')
           fi
 
           case "$PR_BASE" in
@@ -112,6 +90,10 @@ jobs:
           esac
 
           case "$PR_HEAD" in
+            *-to-base-v2|*-to-base-v2-pr-*)
+              echo "Head ${PR_HEAD} is already a base-v2 copy branch. Stop."
+              exit 0
+              ;;
             bug/fix/*) ;;
             *)
               echo "Head ${PR_HEAD} is not bug/fix/GSIS-.... Stop."
@@ -198,6 +180,7 @@ jobs:
           )
 
           NEW_PR=$(gh pr create \
+            --repo "${OWNER}/${REPO}" \
             --base "$TARGET" \
             --head "$COPY_BRANCH" \
             --title "$TITLE" \
