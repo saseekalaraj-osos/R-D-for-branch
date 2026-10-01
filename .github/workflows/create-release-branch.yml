@@ -1,0 +1,95 @@
+name: Create Release Branch
+
+# GitHub only lists workflow_dispatch on the default branch (base-v2).
+# This file MUST be named *.yml (not *.yml.txt) under .github/workflows/.
+#
+# Same as: git switch -c release/<version> <commit_sha>
+#          git push -u origin release/<version>
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (e.g. 2.0). Branch created: release/2.0"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to create the release branch from (e.g. 51cfc8b)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: base-v2
+
+      - name: Fetch all refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          git fetch --tags origin || true
+
+      - name: Validate commit and release version
+        id: validate
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          echo "[release] scenario=inputs version='$RELEASE_VERSION' sha='$COMMIT_SHA'"
+
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "[release] scenario=invalid-version example=2.0"
+            echo "Invalid release version. Use major.minor, for example 2.0"
+            exit 1
+          fi
+
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "[release] scenario=invalid-sha"
+            echo "Invalid commit SHA. Use a 7–40 character hex SHA."
+            exit 1
+          fi
+
+          if ! git cat-file -e "${COMMIT_SHA}^{commit}" 2>/dev/null; then
+            echo "[release] scenario=commit-not-found sha='$COMMIT_SHA'"
+            echo "Commit not found in repository history."
+            exit 1
+          fi
+
+          FULL_SHA=$(git rev-parse "${COMMIT_SHA}^{commit}")
+          BRANCH_NAME="release/${RELEASE_VERSION}"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+            echo "[release] scenario=branch-exists branch='$BRANCH_NAME'"
+            echo "Branch $BRANCH_NAME already exists."
+            exit 1
+          fi
+
+          echo "[release] scenario=validated branch='$BRANCH_NAME' commit='$FULL_SHA'"
+          echo "commit_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create remote release branch
+        env:
+          COMMIT_SHA: ${{ steps.validate.outputs.commit_sha }}
+          BRANCH_NAME: ${{ steps.validate.outputs.branch_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "[release] scenario=create equivalent='git switch -c $BRANCH_NAME $COMMIT_SHA'"
+          git push origin "${COMMIT_SHA}:refs/heads/${BRANCH_NAME}"
+
+          echo "[release] scenario=created branch='$BRANCH_NAME' commit='$COMMIT_SHA'"
+          echo "Created $BRANCH_NAME at $COMMIT_SHA"
