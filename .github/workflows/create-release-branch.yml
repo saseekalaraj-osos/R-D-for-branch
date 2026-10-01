@@ -1,17 +1,16 @@
 name: Create Release Branch
 
 # GitHub only lists workflow_dispatch on the default branch (base-v2).
-# This file MUST be named *.yml (not *.yml.txt) under .github/workflows/.
 #
-# Same as: git switch -c release/<version> <commit_sha>
-#          git push -u origin release/<version>
+# Same as: git switch -c release/<auto-version> <commit_sha>
+#          git push -u origin release/<auto-version>
+#
+# Version is generated automatically:
+#   first  -> release/2.0
+#   next   -> release/2.1, release/2.2, ...
 on:
   workflow_dispatch:
     inputs:
-      release_version:
-        description: "Release version (e.g. 2.0). Branch created: release/2.0"
-        required: true
-        type: string
       commit_sha:
         description: "Commit SHA to create the release branch from (e.g. 51cfc8b)"
         required: true
@@ -19,6 +18,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: create-release-branch
+  cancel-in-progress: false
 
 jobs:
   create-release-branch:
@@ -38,22 +41,15 @@ jobs:
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
           git fetch --tags origin || true
 
-      - name: Validate commit and release version
+      - name: Validate commit and pick next release version
         id: validate
         shell: bash
         env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
 
-          echo "[release] scenario=inputs version='$RELEASE_VERSION' sha='$COMMIT_SHA'"
-
-          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "[release] scenario=invalid-version example=2.0"
-            echo "Invalid release version. Use major.minor, for example 2.0"
-            exit 1
-          fi
+          echo "[release] scenario=inputs sha='$COMMIT_SHA'"
 
           if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
             echo "[release] scenario=invalid-sha"
@@ -68,6 +64,28 @@ jobs:
           fi
 
           FULL_SHA=$(git rev-parse "${COMMIT_SHA}^{commit}")
+
+          MAX_MINOR=-1
+          while IFS=$'\t' read -r _sha ref; do
+            [[ -z "${ref:-}" ]] && continue
+            ver="${ref#refs/heads/release/}"
+            if [[ "$ver" =~ ^2\.([0-9]+)$ ]]; then
+              minor="${BASH_REMATCH[1]}"
+              echo "[release] scenario=found-existing branch='release/$ver'"
+              if (( minor > MAX_MINOR )); then
+                MAX_MINOR=$minor
+              fi
+            fi
+          done < <(git ls-remote --heads origin 'refs/heads/release/*')
+
+          if (( MAX_MINOR < 0 )); then
+            RELEASE_VERSION="2.0"
+            echo "[release] scenario=first-release version='$RELEASE_VERSION'"
+          else
+            RELEASE_VERSION="2.$((MAX_MINOR + 1))"
+            echo "[release] scenario=next-release previous='2.${MAX_MINOR}' version='$RELEASE_VERSION'"
+          fi
+
           BRANCH_NAME="release/${RELEASE_VERSION}"
 
           if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
@@ -79,6 +97,7 @@ jobs:
           echo "[release] scenario=validated branch='$BRANCH_NAME' commit='$FULL_SHA'"
           echo "commit_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create remote release branch
         env:
@@ -93,3 +112,4 @@ jobs:
 
           echo "[release] scenario=created branch='$BRANCH_NAME' commit='$COMMIT_SHA'"
           echo "Created $BRANCH_NAME at $COMMIT_SHA"
+          echo "Created \`$BRANCH_NAME\` at \`$COMMIT_SHA\`" >> "$GITHUB_STEP_SUMMARY"
