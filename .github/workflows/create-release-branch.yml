@@ -1,0 +1,232 @@
+name: Create Release Branch
+
+# GitHub only lists workflow_dispatch on the default branch (base-v2).
+#
+# Same as: git switch -c release/<auto-version> <commit_sha>
+#          then cherry-pick later base-v2 bugfixes for features already
+#          in that cut, then push.
+#
+# Version is generated automatically:
+#   first  -> release/2.0
+#   next   -> release/2.1, release/2.2, ...
+#
+# Example: cut at GSIS-9654-F18 (#33) (a31991f)
+#   History up to that commit contains many feature Jira IDs (F1..F18).
+#   GSIS-3214-BUG-F19-GSIS-9654 (#33) is after the cut on base-v2, so it
+#   is cherry-picked because story GSIS-9654 is already in the release.
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to create the release branch from (e.g. a31991f)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: create-release-branch
+  cancel-in-progress: false
+
+jobs:
+  create-release-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: base-v2
+
+      - name: Fetch all refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          git fetch --tags origin || true
+
+      - name: Validate commit and pick next release version
+        id: validate
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          echo "[release] scenario=inputs sha='$COMMIT_SHA'"
+
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "[release] scenario=invalid-sha"
+            echo "Invalid commit SHA. Use a 7–40 character hex SHA."
+            exit 1
+          fi
+
+          if ! git cat-file -e "${COMMIT_SHA}^{commit}" 2>/dev/null; then
+            echo "[release] scenario=commit-not-found sha='$COMMIT_SHA'"
+            echo "Commit not found in repository history."
+            exit 1
+          fi
+
+          FULL_SHA=$(git rev-parse "${COMMIT_SHA}^{commit}")
+          echo "[release] scenario=resolved-sha short='$(git rev-parse --short "$FULL_SHA")' full='$FULL_SHA'"
+
+          if ! git merge-base --is-ancestor "$FULL_SHA" origin/base-v2; then
+            echo "[release] scenario=not-on-base-v2 sha='$FULL_SHA'"
+            echo "Commit is not on origin/base-v2. Pick a commit from the base-v2 history."
+            exit 1
+          fi
+
+          MAX_MINOR=-1
+          while IFS=$'\t' read -r _sha ref; do
+            [[ -z "${ref:-}" ]] && continue
+            ver="${ref#refs/heads/release/}"
+            if [[ "$ver" =~ ^2\.([0-9]+)$ ]]; then
+              minor="${BASH_REMATCH[1]}"
+              echo "[release] scenario=found-existing branch='release/$ver'"
+              if (( minor > MAX_MINOR )); then
+                MAX_MINOR=$minor
+              fi
+            fi
+          done < <(git ls-remote --heads origin 'refs/heads/release/*')
+
+          if (( MAX_MINOR < 0 )); then
+            RELEASE_VERSION="2.0"
+            echo "[release] scenario=first-release version='$RELEASE_VERSION'"
+          else
+            RELEASE_VERSION="2.$((MAX_MINOR + 1))"
+            echo "[release] scenario=next-release previous='2.${MAX_MINOR}' version='$RELEASE_VERSION'"
+          fi
+
+          BRANCH_NAME="release/${RELEASE_VERSION}"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+            echo "[release] scenario=branch-exists branch='$BRANCH_NAME'"
+            echo "Branch $BRANCH_NAME already exists."
+            exit 1
+          fi
+
+          echo "[release] scenario=validated branch='$BRANCH_NAME' commit='$FULL_SHA'"
+          echo "commit_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release branch and cherry-pick later feature bugfixes
+        env:
+          COMMIT_SHA: ${{ steps.validate.outputs.commit_sha }}
+          BRANCH_NAME: ${{ steps.validate.outputs.branch_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "[release] scenario=create equivalent='git switch -c $BRANCH_NAME $COMMIT_SHA'"
+          git switch -c "$BRANCH_NAME" "$COMMIT_SHA"
+
+          declare -A FEATURE_IDS=()
+          while IFS= read -r subject; do
+            [[ -z "$subject" ]] && continue
+            if [[ "$subject" =~ ^(GSIS-[0-9]+)-F[0-9]+ ]]; then
+              fid="${BASH_REMATCH[1]^^}"
+              if [[ -z "${FEATURE_IDS[$fid]:-}" ]]; then
+                FEATURE_IDS["$fid"]=1
+                echo "[release] scenario=feature-in-cut id='$fid' title='$subject'"
+              fi
+            fi
+          done < <(git log --format=%s "$COMMIT_SHA")
+
+          if ((${#FEATURE_IDS[@]} == 0)); then
+            echo "[release] scenario=no-feature-ids-in-cut"
+          else
+            echo "[release] scenario=feature-ids-in-cut count=${#FEATURE_IDS[@]} ids='${!FEATURE_IDS[*]}'"
+          fi
+
+          PICK_FILE="${RUNNER_TEMP}/release-bugfix-picks.txt"
+          : > "$PICK_FILE"
+
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            sha="${line%% *}"
+            subject="${line#* }"
+            echo "[release] scenario=scan-after-cut sha='$(git rev-parse --short "$sha")' title='$subject'"
+
+            if [[ "$subject" =~ ^GSIS-[0-9]+-BUG-F[0-9]+-(GSIS-[0-9]+) ]]; then
+              story="${BASH_REMATCH[1]^^}"
+              if [[ -n "${FEATURE_IDS[$story]:-}" ]]; then
+                echo "[release] scenario=bugfix-to-include sha='$sha' story='$story' title='$subject'"
+                printf '%s\t%s\n' "$sha" "$subject" >> "$PICK_FILE"
+              else
+                echo "[release] scenario=bugfix-skip-unrelated sha='$sha' story='$story' title='$subject'"
+              fi
+            else
+              echo "[release] scenario=skip-non-matching-bugfix sha='$sha' title='$subject'"
+            fi
+          done < <(git log --reverse --format="%H %s" "${COMMIT_SHA}..origin/base-v2")
+
+          PICKED=0
+          if [[ ! -s "$PICK_FILE" ]]; then
+            echo "[release] scenario=no-later-bugfixes-for-cut-features"
+          else
+            while IFS=$'\t' read -r sha subject; do
+              [[ -z "${sha:-}" ]] && continue
+              if git merge-base --is-ancestor "$sha" HEAD; then
+                echo "[release] scenario=bugfix-already-on-branch sha='$sha' title='$subject'"
+                continue
+              fi
+
+              PARENTS=$(git rev-list --parents -n 1 "$sha")
+              PARENT_COUNT=$(($(echo "$PARENTS" | wc -w) - 1))
+              echo "[release] scenario=cherry-pick sha='$sha' parents=$PARENT_COUNT title='$subject'"
+
+              set +e
+              if (( PARENT_COUNT >= 2 )); then
+                git cherry-pick -x -m 1 "$sha"
+              else
+                git cherry-pick -x "$sha"
+              fi
+              PICK_STATUS=$?
+              set -e
+
+              if (( PICK_STATUS != 0 )); then
+                if git diff --cached --quiet && git diff --quiet; then
+                  echo "[release] scenario=cherry-pick-empty sha='$sha' title='$subject'"
+                  git cherry-pick --skip || git cherry-pick --abort || true
+                  continue
+                fi
+                echo "[release] scenario=cherry-pick-conflict sha='$sha' title='$subject'"
+                git status --short || true
+                git cherry-pick --abort || true
+                echo "Cherry-pick conflict on $sha ($subject). Resolve it by hand on $BRANCH_NAME."
+                exit 1
+              fi
+
+              PICKED=$((PICKED + 1))
+              echo "[release] scenario=cherry-pick-ok sha='$sha' new_head='$(git rev-parse --short HEAD)'"
+            done < "$PICK_FILE"
+          fi
+
+          echo "[release] scenario=push branch='$BRANCH_NAME' head='$(git rev-parse HEAD)' picked=$PICKED"
+          git push origin "HEAD:refs/heads/${BRANCH_NAME}"
+
+          FEATURE_ID_LIST="${!FEATURE_IDS[*]}"
+          FEATURE_ID_LIST="${FEATURE_ID_LIST:-none}"
+          {
+            echo "Created \`$BRANCH_NAME\` from \`$COMMIT_SHA\` (\`$(git log -1 --format=%s "$COMMIT_SHA")\`)."
+            echo
+            echo "Feature Jira IDs in the cut: \`${FEATURE_ID_LIST}\`"
+            echo
+            if (( PICKED == 0 )); then
+              echo "No later base-v2 bugfixes matched those feature IDs."
+            else
+              echo "Cherry-picked **${PICKED}** later bugfix commit(s) onto \`$BRANCH_NAME\`:"
+              echo
+              echo "\`\`\`"
+              cat "$PICK_FILE"
+              echo "\`\`\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "[release] scenario=created branch='$BRANCH_NAME' commit='$(git rev-parse HEAD)' picked=$PICKED"

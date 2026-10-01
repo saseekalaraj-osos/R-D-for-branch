@@ -135,21 +135,21 @@
     <tr><th>Type</th><th>Branch pattern</th><th>Example</th></tr>
     <tr>
       <td>Feature / story</td>
-      <td><code>feature/GSIS-&lt;storyId&gt;-&lt;short-name&gt;</code></td>
-      <td><code>feature/GSIS-3654-leave-api</code></td>
+      <td><code>base/feature/GSIS-&lt;storyId&gt;-&lt;short-name&gt;</code></td>
+      <td><code>base/feature/GSIS-26369-enrol-modification</code></td>
     </tr>
     <tr>
       <td>Bug (general)</td>
-      <td><code>bug/fix/GSIS-&lt;bugId&gt;-&lt;short-name&gt;</code></td>
-      <td><code>bug/fix/GSIS-2875-null-list</code></td>
+      <td><code>base/bugfix/GSIS-&lt;bugId&gt;-&lt;short-name&gt;</code></td>
+      <td><code>base/bugfix/GSIS-25819-offer-letter-status-response-gcet</code></td>
     </tr>
     <tr>
       <td>Bug linked to a story</td>
-      <td><code>bug/fix/GSIS-&lt;bugId&gt;-GSIS-&lt;storyId&gt;</code></td>
-      <td><code>bug/fix/GSIS-2875-GSIS-3654</code></td>
+      <td><code>base/bugfix/GSIS-&lt;bugId&gt;-GSIS-&lt;storyId&gt;-&lt;short-name&gt;</code></td>
+      <td><code>base/bugfix/GSIS-2875-GSIS-3654-null-list</code></td>
     </tr>
   </table>
-  <p>The story id on a bug branch is <strong>optional</strong>. Use it only when the bug belongs to an existing feature/story (same id as <code>feature/GSIS-3654-...</code>).</p>
+  <p>The story id on a bug branch is <strong>optional</strong>. Use it only when the bug belongs to an existing feature/story (same id as <code>base/feature/GSIS-26369-...</code>).</p>
 
   <h2>4. Global F sequence</h2>
   <p><code>F</code> is a running number for the whole <code>base-v2</code> branch. It is not per Jira id.</p>
@@ -165,15 +165,15 @@
 
   <div class="scenario">
     <h3><span class="tag">S1</span> Feature pull request</h3>
-    <p><strong>Branch:</strong> <code>feature/GSIS-3654-leave-api</code></p>
-    <p><strong>PR title set by workflow:</strong> <code>GSIS-3654-F6</code></p>
-    <p><strong>After squash merge (GitHub adds PR number):</strong> <code>GSIS-3654-F6 (#11)</code></p>
+    <p><strong>Branch:</strong> <code>base/feature/GSIS-26369-enrol-modification</code></p>
+    <p><strong>PR title set by workflow:</strong> <code>GSIS-26369-F6</code></p>
+    <p><strong>After squash merge (GitHub adds PR number):</strong> <code>GSIS-26369-F6 (#11)</code></p>
     <p><code>(#11)</code> is a clickable link to that feature PR on the commits page.</p>
   </div>
 
   <div class="scenario">
     <h3><span class="tag">S2</span> Next feature uses the next F number (different Jira)</h3>
-    <p><strong>Branch:</strong> <code>feature/GSIS-3214-employee-api</code></p>
+    <p><strong>Branch:</strong> <code>base/feature/GSIS-3214-employee-api</code></p>
     <p><strong>PR title:</strong> <code>GSIS-3214-F7</code></p>
     <p><strong>After squash:</strong> <code>GSIS-3214-F7 (#10)</code></p>
     <p>F continues globally even though the Jira id changed.</p>
@@ -181,16 +181,16 @@
 
   <div class="scenario">
     <h3><span class="tag tag-bug">S3</span> General bug (no story / feature id)</h3>
-    <p><strong>Branch:</strong> <code>bug/fix/GSIS-2875</code> or <code>bug/fix/GSIS-2875-null-list</code></p>
-    <p><strong>PR title:</strong> <code>GSIS-2875-BUG-F12</code></p>
-    <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12 (#16)</code></p>
+    <p><strong>Branch:</strong> <code>base/bugfix/GSIS-25819-offer-letter-status-response-gcet</code></p>
+    <p><strong>PR title:</strong> <code>GSIS-25819-BUG-F12</code></p>
+    <p><strong>After squash:</strong> <code>GSIS-25819-BUG-F12 (#16)</code></p>
     <p>Use this for standalone bugs that are not tied to a feature branch.</p>
   </div>
 
   <div class="scenario">
     <h3><span class="tag tag-bug">S4</span> Bug linked to a feature/story Jira</h3>
-    <p><strong>Branch:</strong> <code>bug/fix/GSIS-2875-GSIS-3654</code></p>
-    <p>First id = bug ticket. Second id = story/feature ticket (same as <code>feature/GSIS-3654-...</code>).</p>
+    <p><strong>Branch:</strong> <code>base/bugfix/GSIS-2875-GSIS-3654-null-list</code></p>
+    <p>First id = bug ticket. Second id = story/feature ticket (same as <code>base/feature/GSIS-3654-...</code>).</p>
     <p><strong>PR title:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654</code></p>
     <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#16)</code></p>
     <p>The story id is optional. If it is on the branch, it is included so the bug commit lines up with the feature git branch.</p>
@@ -199,7 +199,7 @@
   <div class="scenario">
     <h3><span class="tag tag-bug">S5</span> Bug + story, and link the feature PR (same as #16)</h3>
     <p>When the bug branch contains a story id, the workflow finds the matching feature branch/PR
-      (<code>feature/GSIS-3654-...</code> or the squash commit already on <code>base-v2</code>)
+      (<code>base/feature/GSIS-3654-...</code> or the squash commit already on <code>base-v2</code>)
       and puts that PR number in the title. GitHub still appends the bug PR number.</p>
     <p><strong>PR title set by workflow:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#6)</code></p>
     <p><strong>After squash:</strong> <code>GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)</code></p>
@@ -209,7 +209,7 @@
       <tr><td><code>BUG</code></td><td>This PR is a bugfix</td><td>—</td></tr>
       <tr><td><code>F12</code></td><td>12th squash on <code>base-v2</code></td><td>—</td></tr>
       <tr><td><code>GSIS-3654</code></td><td>Related feature/story Jira and git branch</td><td>No (text)</td></tr>
-      <tr><td><code>(#6)</code></td><td>Feature PR for <code>feature/GSIS-3654-...</code></td><td>Yes, like #16</td></tr>
+      <tr><td><code>(#6)</code></td><td>Feature PR for <code>base/feature/GSIS-3654-...</code></td><td>Yes, like #16</td></tr>
       <tr><td><code>(#16)</code></td><td>This bug PR (added by GitHub)</td><td>Yes</td></tr>
     </table>
     <p>If no feature PR/branch is found, the extra <code>(#6)</code> is omitted. The story id in the title is still kept.</p>
@@ -264,9 +264,9 @@
 
   <div class="ok">
     <strong>Quick examples to show the team</strong><br />
-    Feature: <code>feature/GSIS-3654-leave-api</code> → <code>GSIS-3654-F6 (#11)</code><br />
-    General bug: <code>bug/fix/GSIS-1254-data-empty</code> → <code>GSIS-1254-BUG-F11 (#9)</code><br />
-    Bug + story: <code>bug/fix/GSIS-2875-GSIS-3654</code> → <code>GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)</code>
+    Feature: <code>base/feature/GSIS-26369-enrol-modification</code> → <code>GSIS-26369-F6 (#11)</code><br />
+    General bug: <code>base/bugfix/GSIS-25819-offer-letter-status-response-gcet</code> → <code>GSIS-25819-BUG-F11 (#9)</code><br />
+    Bug + story: <code>base/bugfix/GSIS-2875-GSIS-3654-null-list</code> → <code>GSIS-2875-BUG-F12-GSIS-3654 (#6) (#16)</code>
   </div>
 
   <h2>8. FAQ</h2>
