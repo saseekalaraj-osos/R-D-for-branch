@@ -63,15 +63,23 @@ jobs:
         run: |
           set -euo pipefail
 
+          log() { echo "[copy] $*"; }
+
           OWNER="${{ github.repository_owner }}"
           REPO="${{ github.event.repository.name }}"
           TARGET=base-v2
 
+          log "========== START copy-release-bugfix-to-base-v2 =========="
+          log "scenario=trigger event=${EVENT_NAME} repo=${OWNER}/${REPO} target=${TARGET}"
+          log "github.ref=${GITHUB_REF:-} github.sha=${GITHUB_SHA:-}"
+
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            log "scenario=manual_dispatch input_pr=#${DISPATCH_PR}"
             PR_JSON=$(gh api "repos/${OWNER}/${REPO}/pulls/${DISPATCH_PR}")
             MERGED=$(echo "$PR_JSON" | jq -r '.merged')
+            log "scenario=manual_dispatch merged=${MERGED}"
             if [ "$MERGED" != "true" ]; then
-              echo "PR #${DISPATCH_PR} is not merged. Stop."
+              log "scenario=stop_dispatch_not_merged pr=#${DISPATCH_PR} reason=PR is not merged"
               exit 1
             fi
             PR_NUMBER="$DISPATCH_PR"
@@ -79,50 +87,72 @@ jobs:
             PR_BASE=$(echo "$PR_JSON" | jq -r '.base.ref')
             PR_SHA=$(echo "$PR_JSON" | jq -r '.merge_commit_sha')
             PR_URL=$(echo "$PR_JSON" | jq -r '.html_url')
+            log "scenario=manual_dispatch loaded pr=#${PR_NUMBER} head=${PR_HEAD} base=${PR_BASE} sha=${PR_SHA}"
+          else
+            log "scenario=pull_request_closed_merged pr=#${PR_NUMBER} head=${PR_HEAD} base=${PR_BASE} sha=${PR_SHA} url=${PR_URL}"
           fi
 
           case "$PR_BASE" in
-            release/*) ;;
+            release/*)
+              log "scenario=base_ok base=${PR_BASE} reason=PR targeted a release branch"
+              ;;
             *)
-              echo "Base is ${PR_BASE}, not a release branch. Stop."
+              log "scenario=stop_not_release_base base=${PR_BASE} reason=only release/* merges are copied"
               exit 0
               ;;
           esac
 
           case "$PR_HEAD" in
             *-to-base-v2|*-to-base-v2-pr-*)
-              echo "Head ${PR_HEAD} is already a base-v2 copy branch. Stop."
+              log "scenario=stop_copy_branch_loop head=${PR_HEAD} reason=already a base-v2 copy branch; skip to avoid loop"
               exit 0
               ;;
-            bug/fix/*) ;;
+            bug/fix/*)
+              log "scenario=head_ok head=${PR_HEAD} reason=bug/fix/GSIS-... source branch"
+              ;;
             *)
-              echo "Head ${PR_HEAD} is not bug/fix/GSIS-.... Stop."
+              log "scenario=stop_not_bugfix_head head=${PR_HEAD} reason=only bug/fix/GSIS-... PRs are copied"
               exit 0
               ;;
           esac
 
           BUG_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | head -1 | tr 'a-z' 'A-Z')
           STORY_ID=$(echo "$PR_HEAD" | grep -oiE 'GSIS-[0-9]+' | sed -n '2p' | tr 'a-z' 'A-Z')
+          log "scenario=parse_ids head=${PR_HEAD} bug_id=${BUG_ID:-<none>} story_id=${STORY_ID:-<none>}"
           if [ -z "$BUG_ID" ]; then
-            echo "No GSIS id on ${PR_HEAD}. Stop."
+            log "scenario=stop_no_gsis head=${PR_HEAD} reason=no GSIS id on the bug/fix branch name"
             exit 0
+          fi
+          if [ -n "${STORY_ID:-}" ] && [ "$STORY_ID" != "$BUG_ID" ]; then
+            log "scenario=bug_linked_to_story bug=${BUG_ID} story=${STORY_ID}"
+          else
+            log "scenario=bug_without_story bug=${BUG_ID} reason=general bug; no feature story id on the branch"
+            STORY_ID=""
           fi
 
           if [ -z "$PR_SHA" ] || [ "$PR_SHA" = "null" ]; then
-            echo "No merge commit SHA on PR #${PR_NUMBER}."
+            log "scenario=fail_no_merge_sha pr=#${PR_NUMBER} reason=GitHub did not set merge_commit_sha"
             exit 1
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          log "scenario=fetch fetching origin/${TARGET} and origin/${PR_BASE}"
           git fetch origin "$TARGET" "$PR_BASE"
+          log "scenario=fetch_ok base_v2=$(git rev-parse --short origin/${TARGET}) release=$(git rev-parse --short origin/${PR_BASE})"
 
           WORK_BRANCH="copy-${BUG_ID}-to-${TARGET}-pr-${PR_NUMBER}"
+          log "scenario=worktree creating local branch ${WORK_BRANCH} from origin/${TARGET}"
           git switch -c "$WORK_BRANCH" "origin/${TARGET}"
 
           PARENTS=$(git rev-list --parents -n 1 "$PR_SHA")
           PARENT_COUNT=$(($(echo "$PARENTS" | wc -w) - 1))
-          echo "Picking ${PR_SHA} from ${PR_BASE} (${PARENT_COUNT} parent(s)) onto ${TARGET}"
+          log "scenario=inspect_merge_commit sha=${PR_SHA} parents=${PARENT_COUNT} parent_list=${PARENTS}"
+          if [ "$PARENT_COUNT" -ge 2 ]; then
+            log "scenario=cherry_pick_merge_commit sha=${PR_SHA} command=git cherry-pick -x -m 1 reason=two-parent merge commit"
+          else
+            log "scenario=cherry_pick_squash_commit sha=${PR_SHA} command=git cherry-pick -x reason=squash merge has one parent"
+          fi
 
           set +e
           if [ "$PARENT_COUNT" -ge 2 ]; then
@@ -132,15 +162,20 @@ jobs:
           fi
           PICK_STATUS=$?
           set -e
+          log "scenario=cherry_pick_result status=${PICK_STATUS}"
 
           if [ "$PICK_STATUS" -ne 0 ]; then
             if git diff --cached --quiet && git diff --quiet; then
+              log "scenario=already_on_base_v2 sha=${PR_SHA} reason=cherry-pick was empty; ${TARGET} already has this change"
               git cherry-pick --skip || git cherry-pick --abort || true
               gh pr comment "$PR_NUMBER" --body \
                 "The ${PR_BASE} bug/fix is already on \`${TARGET}\` (empty cherry-pick of \`${PR_SHA}\`)." || true
-              echo "Empty cherry-pick; already on ${TARGET}."
+              log "scenario=comment_source_pr pr=#${PR_NUMBER} result=already on ${TARGET}"
+              log "========== END copy-release-bugfix-to-base-v2 (already present) =========="
               exit 0
             fi
+            log "scenario=cherry_pick_conflict sha=${PR_SHA} onto=${TARGET} reason=same lines changed on base-v2 and release"
+            git status --short || true
             git cherry-pick --abort || true
             gh pr comment "$PR_NUMBER" --body \
               "Could not auto-copy this ${PR_BASE} bug/fix onto \`${TARGET}\` (conflicts on \`${PR_SHA}\`). Cherry-pick it by hand:
@@ -150,9 +185,11 @@ jobs:
           git cherry-pick -x $([ "$PARENT_COUNT" -ge 2 ] && echo "-m 1 ") ${PR_SHA}
           git push origin ${TARGET}
           \`\`\`" || true
-            echo "Cherry-pick conflicted."
+            log "scenario=fail_conflict commented on pr=#${PR_NUMBER}"
+            log "========== END copy-release-bugfix-to-base-v2 (conflict) =========="
             exit 1
           fi
+          log "scenario=cherry_pick_ok sha=${PR_SHA} new_head=$(git rev-parse --short HEAD)"
 
           HIGHEST=$(git log "origin/${TARGET}" --format=%s \
             | grep -oiE 'GSIS-[0-9]+(-BUG)?-F[0-9]+' \
@@ -161,41 +198,61 @@ jobs:
             | sort -n \
             | tail -1)
           NEXT=$(( ${HIGHEST:-0} + 1 ))
+          log "scenario=f_sequence highest_on_${TARGET}=${HIGHEST:-0} next=F${NEXT}"
           TITLE="${BUG_ID}-BUG-F${NEXT}"
+          log "scenario=title_bug_only title=${TITLE}"
           if [ -n "${STORY_ID:-}" ] && [ "$STORY_ID" != "$BUG_ID" ]; then
             TITLE="${TITLE}-${STORY_ID}"
+            log "scenario=title_append_story title=${TITLE}"
             FEATURE_PR=$(gh pr list --repo "${OWNER}/${REPO}" --state merged --base "$TARGET" --limit 100 \
               --json number,headRefName \
               --jq "[.[] | select(.headRefName | test(\"feature/${STORY_ID}\"; \"i\"))][0].number // empty" || true)
-            if [ -z "${FEATURE_PR:-}" ]; then
+            if [ -n "${FEATURE_PR:-}" ]; then
+              log "scenario=feature_pr_from_merged_pr story=${STORY_ID} feature_pr=#${FEATURE_PR}"
+            else
+              log "scenario=feature_pr_not_in_merged_prs story=${STORY_ID} trying commit messages on ${TARGET}"
               FEATURE_PR=$(git log "origin/${TARGET}" --format=%s \
                 | grep -iE "^${STORY_ID}-F[0-9]+" \
                 | grep -oE '\(#([0-9]+)\)' \
                 | head -1 \
                 | tr -d '(#) ' || true)
+              if [ -n "${FEATURE_PR:-}" ]; then
+                log "scenario=feature_pr_from_commit_title story=${STORY_ID} feature_pr=#${FEATURE_PR}"
+              else
+                log "scenario=feature_pr_not_found story=${STORY_ID} reason=no feature/${STORY_ID} PR or commit on ${TARGET}"
+              fi
             fi
             if [ -n "${FEATURE_PR:-}" ]; then
               TITLE="${TITLE} (#${FEATURE_PR})"
+              log "scenario=title_append_feature_pr title=${TITLE}"
             fi
           fi
+          log "scenario=final_commit_title title=${TITLE}"
 
           git commit --amend -m "$TITLE" -m "Copied from ${PR_URL} (\`${PR_SHA}\`)."
+          log "scenario=amended_commit sha=$(git rev-parse --short HEAD) title=${TITLE}"
 
+          log "scenario=push_base_v2 dest=origin/${TARGET} sha=$(git rev-parse --short HEAD)"
           git push origin "HEAD:refs/heads/${TARGET}"
           LAND_SHA=$(git rev-parse HEAD)
+          log "scenario=push_ok ${TARGET}=${LAND_SHA} title=${TITLE}"
 
           OPEN_COPIES=$(gh pr list --repo "${OWNER}/${REPO}" --base "$TARGET" --state open \
             --json number,headRefName \
             --jq ".[] | select(.headRefName | test(\"-to-base-v2\")) | .number" || true)
           if [ -n "${OPEN_COPIES:-}" ]; then
+            log "scenario=close_leftover_copy_prs prs=${OPEN_COPIES}"
             while IFS= read -r COPY_PR; do
               [ -z "$COPY_PR" ] && continue
+              log "scenario=close_copy_pr pr=#${COPY_PR} reason=change already pushed to ${TARGET}"
               gh pr close "$COPY_PR" --repo "${OWNER}/${REPO}" \
                 --comment "Landed directly on \`${TARGET}\` as \`${TITLE}\` (\`${LAND_SHA}\`)." || true
             done <<< "$OPEN_COPIES"
+          else
+            log "scenario=no_leftover_copy_prs"
           fi
 
           gh pr comment "$PR_NUMBER" --body \
             "Copied this ${PR_BASE} bug/fix onto \`${TARGET}\` immediately: \`${TITLE}\` (\`${LAND_SHA}\`)." || true
-
-          echo "Pushed ${TITLE} to ${TARGET} (${LAND_SHA})"
+          log "scenario=comment_source_pr pr=#${PR_NUMBER} title=${TITLE} sha=${LAND_SHA}"
+          log "========== END copy-release-bugfix-to-base-v2 (pushed) =========="
