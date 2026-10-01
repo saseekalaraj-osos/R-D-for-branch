@@ -15,7 +15,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public List<LeaveDto> getAll() {
         List<LeaveDto> leaveDtos = new ArrayList<>();//added some memory allocation
-        int dummy = 5;
+        int dummy = 5;//dummy value assign
         return leaveDtos;
     }
 }
