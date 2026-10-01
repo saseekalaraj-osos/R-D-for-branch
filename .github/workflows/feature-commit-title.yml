@@ -52,10 +52,17 @@ jobs:
               /^(GSIS-\d+)-BUG-F\d+(?:-(GSIS-\d+))?/i;
             const anyJiraRe = /(GSIS-\d+)/i;
 
+            function log(message) {
+              core.info(`[title] ${message}`);
+            }
+
             function ticketFrom(ref, fallbackTitle) {
               if (ref) {
                 const bug = ref.match(bugBranchRe);
                 if (bug) {
+                  log(
+                    `scenario=parse_bug_branch branch=${ref} bug=${bug[1].toUpperCase()} story=${bug[2] ? bug[2].toUpperCase() : '<none>'}`
+                  );
                   return {
                     kind: 'bug',
                     id: bug[1].toUpperCase(),
@@ -64,6 +71,9 @@ jobs:
                 }
                 const feature = ref.match(featureBranchRe);
                 if (feature) {
+                  log(
+                    `scenario=parse_feature_branch branch=${ref} story=${feature[1].toUpperCase()}`
+                  );
                   return {
                     kind: 'feature',
                     id: feature[1].toUpperCase(),
@@ -74,6 +84,9 @@ jobs:
 
               const bugTitle = fallbackTitle && fallbackTitle.match(bugTitleRe);
               if (bugTitle) {
+                log(
+                  `scenario=parse_bug_from_pr_title title="${fallbackTitle}" bug=${bugTitle[1].toUpperCase()} story=${bugTitle[2] ? bugTitle[2].toUpperCase() : '<none>'}`
+                );
                 return {
                   kind: 'bug',
                   id: bugTitle[1].toUpperCase(),
@@ -83,13 +96,20 @@ jobs:
 
               const fromTitle =
                 fallbackTitle && fallbackTitle.match(anyJiraRe);
-              return fromTitle
-                ? {
-                    kind: 'feature',
-                    id: fromTitle[1].toUpperCase(),
-                    storyId: null
-                  }
-                : null;
+              if (fromTitle) {
+                log(
+                  `scenario=parse_gsis_from_pr_title title="${fallbackTitle}" id=${fromTitle[1].toUpperCase()} kind=feature_fallback`
+                );
+                return {
+                  kind: 'feature',
+                  id: fromTitle[1].toUpperCase(),
+                  storyId: null
+                };
+              }
+              log(
+                `scenario=parse_no_gsis branch=${ref || '<none>'} title="${fallbackTitle || '<none>'}"`
+              );
+              return null;
             }
 
             function isFeatureBranchForStory(ref, storyId) {
@@ -117,17 +137,20 @@ jobs:
                   break;
                 }
               }
+              log(`scenario=list_base_commits branch=${baseBranch} count=${commits.length}`);
               return commits;
             }
 
             async function listBasePullRequests() {
-              return github.paginate(github.rest.pulls.list, {
+              const prs = await github.paginate(github.rest.pulls.list, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 state: 'all',
                 base: baseBranch,
                 per_page: 100
               });
+              log(`scenario=list_base_prs branch=${baseBranch} count=${prs.length}`);
+              return prs;
             }
 
             function featurePrFromCommits(storyId, commits) {
@@ -139,9 +162,13 @@ jobs:
                 const title = commit.commit.message.split('\n')[0].trim();
                 const match = title.match(commitRe);
                 if (match) {
+                  log(
+                    `scenario=feature_pr_from_commit story=${storyId} commit="${title}" feature_pr=#${match[1]}`
+                  );
                   return Number(match[1]);
                 }
               }
+              log(`scenario=feature_pr_not_in_commits story=${storyId}`);
               return null;
             }
 
@@ -149,12 +176,18 @@ jobs:
               const featurePrs = allPrs.filter((pr) =>
                 isFeatureBranchForStory(pr.head.ref, storyId)
               );
+              log(
+                `scenario=feature_pr_candidates story=${storyId} matching_prs=${featurePrs.length}`
+              );
               const merged = featurePrs
                 .filter((pr) => pr.merged_at)
                 .sort(
                   (a, b) => new Date(b.merged_at) - new Date(a.merged_at)
                 );
               if (merged.length > 0) {
+                log(
+                  `scenario=feature_pr_from_merged_pr story=${storyId} feature_pr=#${merged[0].number} branch=${merged[0].head.ref}`
+                );
                 return merged[0].number;
               }
 
@@ -162,6 +195,9 @@ jobs:
                 (pr) => pr.state === 'open' && !pr.draft
               );
               if (open.length > 0) {
+                log(
+                  `scenario=feature_pr_from_open_pr story=${storyId} feature_pr=#${open[0].number} branch=${open[0].head.ref}`
+                );
                 return open[0].number;
               }
 
@@ -176,8 +212,15 @@ jobs:
                 ref: `heads/feature/${storyId}`
               });
               if (refs.data.length === 0) {
+                log(
+                  `scenario=feature_pr_not_found story=${storyId} reason=no feature/${storyId} branch or PR`
+                );
                 core.warning(
                   `No feature/${storyId} branch or PR found to link.`
+                );
+              } else {
+                log(
+                  `scenario=feature_branch_exists_without_pr story=${storyId} refs=${refs.data.map((r) => r.ref).join(',')}`
                 );
               }
               return null;
@@ -185,14 +228,36 @@ jobs:
 
             function highestMergedFeatureNumber(commits) {
               let highest = 0;
+              let highestTitle = '<none>';
               for (const commit of commits) {
                 const title = commit.commit.message.split('\n')[0].trim();
                 const match = title.match(titleRe);
                 if (match) {
-                  highest = Math.max(highest, Number(match[2]));
+                  const n = Number(match[2]);
+                  if (n >= highest) {
+                    highest = n;
+                    highestTitle = title;
+                  }
                 }
               }
+              log(
+                `scenario=f_sequence highest=F${highest} from_commit="${highestTitle}" next=F${highest + 1}`
+              );
               return highest;
+            }
+
+            log(
+              `========== START auto-squash-title event=${context.eventName} action=${context.payload.action || 'n/a'} ==========`
+            );
+            if (context.eventName === 'pull_request') {
+              const pr = context.payload.pull_request;
+              log(
+                `scenario=trigger_pull_request pr=#${pr.number} head=${pr.head.ref} base=${pr.base.ref} title="${pr.title}"`
+              );
+            } else if (context.eventName === 'push') {
+              log(
+                `scenario=trigger_push_base_v2 sha=${context.sha} ref=${context.ref} reason=retitle remaining open PRs after a squash`
+              );
             }
 
             const commits = await listBaseCommits();
@@ -200,13 +265,22 @@ jobs:
             const openPrs = allPrs
               .filter((pr) => pr.state === 'open' && !pr.draft)
               .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            log(
+              `scenario=open_prs_to_retitle count=${openPrs.length} numbers=${openPrs.map((p) => '#' + p.number).join(',') || '<none>'}`
+            );
 
             let next = highestMergedFeatureNumber(commits) + 1;
             const updated = [];
 
             for (const pr of openPrs) {
+              log(
+                `scenario=process_pr pr=#${pr.number} branch=${pr.head.ref} current_title="${pr.title}" assigned_f=F${next}`
+              );
               const ticket = ticketFrom(pr.head.ref, pr.title);
               if (!ticket) {
+                log(
+                  `scenario=skip_no_gsis pr=#${pr.number} branch=${pr.head.ref} reason=no GSIS id on branch or title`
+                );
                 core.warning(
                   `PR #${pr.number} branch ${pr.head.ref} has no GSIS id; skipped.`
                 );
@@ -216,8 +290,14 @@ jobs:
               let nextTitle;
               if (ticket.kind === 'bug') {
                 nextTitle = `${ticket.id}-BUG-F${next}`;
+                log(
+                  `scenario=title_bug pr=#${pr.number} bug=${ticket.id} title=${nextTitle}`
+                );
                 if (ticket.storyId) {
                   nextTitle += `-${ticket.storyId}`;
+                  log(
+                    `scenario=title_bug_with_story pr=#${pr.number} title=${nextTitle}`
+                  );
                   const featurePr = await featurePrNumber(
                     ticket.storyId,
                     allPrs,
@@ -225,27 +305,57 @@ jobs:
                   );
                   if (featurePr && featurePr !== pr.number) {
                     nextTitle += ` (#${featurePr})`;
+                    log(
+                      `scenario=title_bug_with_feature_link pr=#${pr.number} title=${nextTitle} feature_pr=#${featurePr}`
+                    );
+                  } else if (featurePr === pr.number) {
+                    log(
+                      `scenario=skip_self_feature_link pr=#${pr.number} reason=feature PR number is this same PR`
+                    );
+                  } else {
+                    log(
+                      `scenario=title_bug_story_without_feature_link pr=#${pr.number} title=${nextTitle}`
+                    );
                   }
+                } else {
+                  log(
+                    `scenario=title_bug_without_story pr=#${pr.number} title=${nextTitle}`
+                  );
                 }
               } else {
                 nextTitle = `${ticket.id}-F${next}`;
+                log(
+                  `scenario=title_feature pr=#${pr.number} story=${ticket.id} title=${nextTitle}`
+                );
               }
               next += 1;
 
               if (pr.title !== nextTitle) {
+                log(
+                  `scenario=update_pr_title pr=#${pr.number} from="${pr.title}" to="${nextTitle}"`
+                );
                 await github.rest.pulls.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   pull_number: pr.number,
                   title: nextTitle
                 });
+                log(`scenario=update_pr_title_ok pr=#${pr.number}`);
+              } else {
+                log(
+                  `scenario=title_already_correct pr=#${pr.number} title="${nextTitle}"`
+                );
               }
               updated.push(`#${pr.number} -> ${nextTitle}`);
             }
 
             if (updated.length === 0) {
+              log('scenario=done_no_open_prs reason=nothing to retitle');
               core.notice('No open PRs to retitle.');
+              log('========== END auto-squash-title ==========');
               return;
             }
 
+            log(`scenario=done_retitled ${updated.join(' | ')}`);
             core.notice(`Squash titles: ${updated.join(', ')}`);
+            log('========== END auto-squash-title ==========');
